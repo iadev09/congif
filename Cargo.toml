@@ -1,0 +1,46 @@
+[package]
+name = "congif"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+authors = ["iadev09 <iadev09@claviron.org>"]
+description = "Typed configuration reading, validated preparation and atomic snapshots with extensible parsers."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/iadev09/congif"
+documentation = "https://docs.rs/congif"
+readme = "README.md"
+keywords = ["configuration", "serde", "snapshot", "reload", "watch"]
+categories = ["config", "asynchronous"]
+exclude = ["/Cargo.lock", "/rustfmt.toml", "/.idea/**", "/ARCHITECTURE.md", "/*.local.md"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+default = []
+yaml = ["dep:serde_yaml"]
+toml = ["dep:toml"]
+json = ["dep:serde_json"]
+ini = ["dep:rust-ini"]
+xml = ["dep:roxmltree"]
+# Native notifications: Linux, macOS and FreeBSD only. No polling fallback.
+watch = ["dep:notify"]
+
+[dependencies]
+serde = { version = "1", features = ["derive", "rc"] }
+serde-value = "0.7"
+arc-swap = "1"
+async-trait = "0.1"
+thiserror = "2"
+tokio = { version = "1", features = ["fs", "sync"] }
+serde_yaml = { version = "0.9", optional = true }
+toml = { version = "1", optional = true }
+serde_json = { version = "1", optional = true }
+rust-ini = { version = "0.21", optional = true }
+roxmltree = { version = "0.21", optional = true }
+
+[target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))'.dependencies]
+notify = { version = "8.2", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }

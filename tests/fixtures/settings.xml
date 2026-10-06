@@ -1,0 +1,5 @@
+<config>
+  <directory>${ROOT}/storage</directory>
+  <endpoint name="first">https://example.com/?a=1&amp;b=2</endpoint>
+  <endpoint name="second">https://example.test/</endpoint>
+</config>

@@ -1,0 +1,6 @@
+{
+  "default": "disk",
+  "stores": {
+    "disk": {"driver": "file", "path": "${CACHE_ROOT}/disk"}
+  }
+}

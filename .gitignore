@@ -1,0 +1,14 @@
+/target
+/.env
+/.idea
+/.vscode
+/.venv
+/.nvimlog
+*.log
+*.local
+*.local.md
+*.swp
+*.swo
+*.swn
+.DS_Store
+Cargo.lock

@@ -1,0 +1,1 @@
+<!DOCTYPE config [<!ENTITY value "secret">]><config>&value;</config>
