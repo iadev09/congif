@@ -13,6 +13,15 @@ pub trait Configurable: Send + Sync {
     /// One source with an explicit parser format. Reading is owned by the reader.
     fn source(&self) -> ConfigFile;
 
+    /// The configuration that stands when the declared source file does not
+    /// exist. `None`, the default, keeps a missing file a read error. Return a
+    /// value only where absence is itself a complete declaration — no
+    /// listeners, no caches — so the not-found branch is written once, here,
+    /// and not in every caller. The value is validated like a read one.
+    fn absent_source(&self) -> Option<Self::Config> {
+        None
+    }
+
     /// Opt in to source notifications after a validated candidate is prepared.
     /// Reading a source does not, by itself, request automatic watching.
     fn as_config_observer(

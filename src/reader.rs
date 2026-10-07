@@ -319,7 +319,15 @@ impl ConfigReader {
         for owner in &pending {
             let file = owner.source();
             let parser = reader.format_parser(&file.format, &file.path)?;
-            let bytes = reader.read_bytes(&file.path).await?;
+            // An absent file is the owner's to answer for in `prepare`.
+            let bytes = match reader.read_bytes(&file.path).await {
+                Err(Error::Read { source, .. })
+                    if source.kind() == std::io::ErrorKind::NotFound =>
+                {
+                    continue;
+                }
+                other => other?,
+            };
             let variables = match reader.environment_for((*owner).type_id())? {
                 Some(environment) => Some(
                     reader
@@ -589,9 +597,17 @@ impl ConfigReader {
                 environment_catalog: self.environment_catalog.clone(),
                 variables: Some(variables),
             };
-            context.read_file(&owner.source()).await?
+            context.read_file(&owner.source()).await
         } else {
-            self.read_file(&owner.source()).await?
+            self.read_file(&owner.source()).await
+        };
+        let candidate = match candidate {
+            Err(Error::Read { path, source })
+                if source.kind() == std::io::ErrorKind::NotFound =>
+            {
+                owner.absent_source().ok_or(Error::Read { path, source })?
+            }
+            other => other?,
         };
         owner.validate_config(&candidate)?;
         Ok(candidate)

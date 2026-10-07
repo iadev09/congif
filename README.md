@@ -148,7 +148,11 @@ impl Configurable for CounterSettings {
 
 `reader.prepare(&owner).await` reads and validates without publishing or calling
 `configure`. Each component declares one source and its explicit format, independent
-of its filename extension. After batch preparation, `configure_registered(&owner)`
+of its filename extension; `ConfigFile::yaml(path)` and its siblings spell the
+common cases. A source that may legitimately be missing — no file, no listeners —
+answers `absent_source()` with the configuration that stands in its place; the
+default keeps a missing file a read error, and the standing value is validated
+like a read one. After batch preparation, `configure_registered(&owner)`
 applies the typed candidate and acknowledges it only on success. Continuo drives
 these steps before running services. Validation must not mutate live resources.
 

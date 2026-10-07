@@ -30,3 +30,32 @@ pub struct ConfigFile {
     pub path: PathBuf,
     pub format: Format,
 }
+
+impl ConfigFile {
+    pub fn new(
+        path: impl Into<PathBuf>,
+        format: Format,
+    ) -> Self {
+        Self { path: path.into(), format }
+    }
+
+    pub fn json(path: impl Into<PathBuf>) -> Self {
+        Self::new(path, Format::Json)
+    }
+
+    pub fn yaml(path: impl Into<PathBuf>) -> Self {
+        Self::new(path, Format::Yaml)
+    }
+
+    pub fn toml(path: impl Into<PathBuf>) -> Self {
+        Self::new(path, Format::Toml)
+    }
+
+    pub fn ini(path: impl Into<PathBuf>) -> Self {
+        Self::new(path, Format::Ini)
+    }
+
+    pub fn xml(path: impl Into<PathBuf>) -> Self {
+        Self::new(path, Format::Xml)
+    }
+}
