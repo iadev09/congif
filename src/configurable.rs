@@ -22,6 +22,24 @@ pub trait Configurable: Send + Sync {
         None
     }
 
+    /// Read the candidate the reader then validates and compares. The default
+    /// reads the declared source, answering an absent file with
+    /// [`absent_source`](Self::absent_source). Congif records the `includes` a
+    /// document names and watches them, but opens none of them: an owner whose
+    /// document is completed by its includes merges them here, reading each
+    /// through [`ConfigReader::read_include`] so it is parsed with the owner's
+    /// environment and its own includes are recorded. The merged value is what
+    /// equality compares, so a change inside an include is a changed config.
+    async fn read_config(
+        &self,
+        reader: &ConfigReader,
+    ) -> Result<Self::Config>
+    where
+        Self: Sized + 'static,
+    {
+        reader.read_source(self).await
+    }
+
     /// Opt in to source notifications after a validated candidate is prepared.
     /// Reading a source does not, by itself, request automatic watching.
     fn as_config_observer(

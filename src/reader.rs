@@ -608,38 +608,77 @@ impl ConfigReader {
     /// Prepare and validate an owner's concrete configuration. This does not
     /// replace an active snapshot, refresh environment sources, or boot/reload
     /// any runtime resources. Batch reload refreshes environments explicitly.
-    pub async fn prepare<C: Configurable + ?Sized + 'static>(
+    pub async fn prepare<C: Configurable + 'static>(
         &self,
         owner: &C,
     ) -> Result<C::Config> {
-        let environment = owner
+        let candidate = owner.read_config(self).await?;
+        owner.validate_config(&candidate)?;
+        Ok(candidate)
+    }
+
+    /// This reader with the variables the owner's environment selects, or
+    /// `None` when the owner has no environment and the reader's own stand.
+    fn for_owner<C: Configurable + ?Sized + 'static>(
+        &self,
+        owner: &C,
+    ) -> Result<Option<Self>> {
+        let Some(environment) = owner
             .environment()
             .cloned()
-            .or(self.environment_for(TypeId::of::<C>())?);
-        let candidate = if let Some(environment) = environment {
-            self.environments.snapshot().get(&environment)?;
-            let variables = match &self.environment_catalog {
-                Some(catalog) => catalog.get(&environment)?,
-                None => environment.snapshot()?,
-            };
-            let context = Self {
-                identity: self.identity.clone(),
-                parsers: self.parsers.clone(),
-                sources: self.sources.clone(),
-                parsed_sources: self.parsed_sources.clone(),
-                includes: self.includes.clone(),
-                configs: ConfigStore::new(
-                    self.configs.snapshot().as_ref().clone(),
-                ),
-                preparation: tokio::sync::Mutex::new(()),
-                environments: self.environments.clone(),
-                environment_bindings: self.environment_bindings.clone(),
-                environment_catalog: self.environment_catalog.clone(),
-                variables: Some(variables),
-            };
-            context.read_file(&owner.source()).await
-        } else {
-            self.read_file(&owner.source()).await
+            .or(self.environment_for(TypeId::of::<C>())?)
+        else {
+            return Ok(None);
+        };
+        self.environments.snapshot().get(&environment)?;
+        let variables = match &self.environment_catalog {
+            Some(catalog) => catalog.get(&environment)?,
+            None => environment.snapshot()?,
+        };
+        Ok(Some(Self {
+            identity: self.identity.clone(),
+            parsers: self.parsers.clone(),
+            sources: self.sources.clone(),
+            parsed_sources: self.parsed_sources.clone(),
+            includes: self.includes.clone(),
+            configs: ConfigStore::new(self.configs.snapshot().as_ref().clone()),
+            preparation: tokio::sync::Mutex::new(()),
+            environments: self.environments.clone(),
+            environment_bindings: self.environment_bindings.clone(),
+            environment_catalog: self.environment_catalog.clone(),
+            variables: Some(variables),
+        }))
+    }
+
+    /// Read a file an owner's document includes, parsed with the owner's
+    /// environment and with its own `includes` recorded. The default
+    /// [`Configurable::read_config`] never calls this; an owner that merges
+    /// its includes does, over [`includes_for`](Self::includes_for).
+    pub async fn read_include<T, C>(
+        &self,
+        owner: &C,
+        file: &crate::ConfigFile,
+    ) -> Result<T>
+    where
+        T: DeserializeOwned,
+        C: Configurable + ?Sized + 'static,
+    {
+        match self.for_owner(owner)? {
+            Some(context) => context.read_file(file).await,
+            None => self.read_file(file).await,
+        }
+    }
+
+    /// Read the owner's declared source, without validating it: the body of
+    /// the default [`Configurable::read_config`]. An absent file answers with
+    /// the owner's `absent_source` and forgets the includes it once declared.
+    pub async fn read_source<C: Configurable + ?Sized + 'static>(
+        &self,
+        owner: &C,
+    ) -> Result<C::Config> {
+        let candidate = match self.for_owner(owner)? {
+            Some(context) => context.read_file(&owner.source()).await,
+            None => self.read_file(&owner.source()).await,
         };
         let candidate = match candidate {
             Err(Error::Read { path, source })
@@ -658,7 +697,6 @@ impl ConfigReader {
             }
             other => other?,
         };
-        owner.validate_config(&candidate)?;
         Ok(candidate)
     }
 

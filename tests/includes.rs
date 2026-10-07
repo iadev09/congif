@@ -47,6 +47,39 @@ impl<const N: u8> Configurable for Owner<N> {
     }
 }
 
+/// An owner whose document is completed by its includes: the sum of every
+/// part's `value`, merged in `read_config`.
+struct Merging(PathBuf);
+
+#[async_trait]
+impl Configurable for Merging {
+    type Config = Settings;
+
+    fn source(&self) -> ConfigFile {
+        ConfigFile::yaml(self.0.clone())
+    }
+
+    async fn read_config(
+        &self,
+        reader: &ConfigReader,
+    ) -> Result<Settings> {
+        let mut total = reader.read_source(self).await?;
+        for include in reader.includes_for(&self.0)? {
+            let part: Settings =
+                reader.read_include(self, &ConfigFile::yaml(include)).await?;
+            total.value += part.value;
+        }
+        Ok(total)
+    }
+
+    async fn configure(
+        &self,
+        _: &Settings,
+    ) -> Result<()> {
+        Ok(())
+    }
+}
+
 struct CountingYaml(Arc<AtomicU64>);
 
 #[async_trait]
@@ -354,4 +387,34 @@ async fn submitted_source_does_not_replace_live_dependency_index() {
         reader.includes_for(fixture.path()).unwrap(),
         vec![fixture.0.join("first.yaml")]
     );
+}
+
+#[tokio::test]
+async fn an_owner_merging_its_includes_sees_a_changed_part_as_a_changed_config()
+{
+    let fixture = Fixture::new();
+    fixture.replace("glob.yaml");
+    let parts = fixture.0.join("parts");
+    std::fs::create_dir(&parts).unwrap();
+    std::fs::write(parts.join("first.yaml"), "value: 2\n").unwrap();
+    std::fs::write(parts.join("second.yaml"), "value: 3\n").unwrap();
+    let owner = Merging(fixture.path());
+    let reader = reader();
+    reader.initialize_owners(&[&owner]).await.unwrap();
+    assert_eq!(reader.snapshot::<Merging>().unwrap().value, 6);
+    assert!(
+        reader
+            .sources_for(&owner)
+            .unwrap()
+            .contains(&parts.join("second.yaml"))
+    );
+    std::fs::write(parts.join("second.yaml"), "value: 10\n").unwrap();
+    let notification =
+        std::fs::canonicalize(&parts).unwrap().join("second.yaml");
+    let changed = reader
+        .prepare_changed_sources(&[&owner], &[notification])
+        .await
+        .unwrap();
+    assert_eq!(changed, [std::any::TypeId::of::<Merging>()]);
+    assert_eq!(reader.snapshot::<Merging>().unwrap().value, 13);
 }

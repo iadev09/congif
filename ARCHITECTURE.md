@@ -130,7 +130,12 @@ The parser exposes this metadata through `ConfigParser::includes`. Other
 adapters opt in by implementing that hook. Built-in adapters consume the reserved
 keys before schema decoding, so even strict schemas need no metadata fields.
 The batch syntax cache pins both the cleaned value and its dependency metadata.
-Domain-specific merging is not implemented by Congif.
+Domain-specific merging is not implemented by Congif. An owner whose document
+is completed by its includes merges them in `Configurable::read_config`, the
+hook `prepare` reads through: it takes `includes_for` its source and reads each
+file with `ConfigReader::read_include`, which parses under the owner's
+environment and records that file's own includes. The merged value is the
+owner's `Config`, so equality — and therefore "changed" — covers the includes.
 
 `ConfigReader` owns `HashMap<PathBuf, Vec<PathBuf>>` for these dependencies.
 Relative entries are resolved beside their declaring source. Successful file
