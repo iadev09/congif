@@ -6,6 +6,9 @@ use crate::{Error, Result};
 pub type Variables = HashMap<String, String>;
 
 /// Expand the source template once; inserted values are never evaluated again.
+/// Only `${NAME}` is a variable: a bare `$name` is text, as it is in a
+/// redirect target or a shell-looking path, and `$$` writes a literal `$`
+/// where `${` would otherwise start an expression.
 pub(crate) fn expand(
     text: &str,
     variables: &Variables,
@@ -63,32 +66,19 @@ fn expand_with(
             escaped = false;
             continue;
         }
-        let (name, consumed) =
-            if let Some(expression) = remaining.strip_prefix("${") {
-                let end = expression.find('}').ok_or(Error::InvalidVariable)?;
-                let name = &expression[..end];
-                if !valid_name(name) {
-                    return Err(Error::InvalidVariable);
-                }
-                (name, end + 3)
-            } else {
-                let expression = &remaining[1..];
-                if !expression
-                    .as_bytes()
-                    .first()
-                    .is_some_and(|ch| ch.is_ascii_alphabetic() || *ch == b'_')
-                {
-                    output.push('$');
-                    remaining = expression;
-                    escaped = false;
-                    continue;
-                }
-                let end = expression
-                    .bytes()
-                    .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == b'_')
-                    .count();
-                (&expression[..end], end + 1)
-            };
+        let Some(expression) = remaining.strip_prefix("${") else {
+            // A bare `$` is text: `$uri` in a redirect, `$20` in a price.
+            output.push('$');
+            remaining = &remaining[1..];
+            escaped = false;
+            continue;
+        };
+        let end = expression.find('}').ok_or(Error::InvalidVariable)?;
+        let name = &expression[..end];
+        if !valid_name(name) {
+            return Err(Error::InvalidVariable);
+        }
+        let consumed = end + 3;
         if escaped {
             return Err(Error::InvalidVariable);
         }

@@ -40,7 +40,7 @@ async fn json_template_preserves_string_content_and_scalar_types() {
     assert_eq!(config.number, 3);
     assert!(config.enabled);
     assert_eq!(config.optional, None);
-    assert_eq!(config.literal, "$TEXT/$20");
+    assert_eq!(config.literal, "$TEXT/$20/$TEXT");
     assert_eq!(config.escaped_quote, format!("quote: \"{text}"));
 }
 

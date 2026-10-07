@@ -38,7 +38,7 @@ application/runtime decides whether to execute a reload regardless of equality.
 1. Configurable components declare one `ConfigFile` with an explicit `Format`.
    The reader resolves that registered parser before opening the source. Direct
    `read(path)` calls still select by extension. Paths have no implicit base directory.
-2. The reader expands `$NAME` and `${NAME}` in UTF-8 source text using the supplied
+2. The reader expands `${NAME}` in UTF-8 source text (a bare `$name` is text) using the supplied
    variables or environment snapshot, without reading process environment.
    Expansion is single-pass and parser-owned: JSON escapes quoted insertions
    and restricts unquoted insertions to numbers, booleans and null; other

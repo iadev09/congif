@@ -356,12 +356,22 @@ async fn variables_reject_missing_and_malformed_expressions() {
 }
 
 #[tokio::test]
-async fn source_variables_expand_both_forms_once_and_escape_literal_dollars() {
+async fn only_braced_names_are_variables_and_bare_dollars_stay_text() {
     let variables = Variables::from([("NAME".into(), "example".into())]);
-    let value = resolve_variables("${NAME}/$NAME/$$NAME/$20", &variables)
-        .await
-        .unwrap();
-    assert_eq!(value, ConfigValue::String("example/example/$NAME/$20".into()));
+    let value =
+        resolve_variables("${NAME}/$NAME/$$NAME/$20/$${NAME}", &variables)
+            .await
+            .unwrap();
+    assert_eq!(
+        value,
+        ConfigValue::String("example/$NAME/$NAME/$20/${NAME}".into())
+    );
+    // A redirect target keeps its placeholders; nothing is defined for them.
+    let value =
+        resolve_variables("https://example.test$uri", &Variables::new())
+            .await
+            .unwrap();
+    assert_eq!(value, ConfigValue::String("https://example.test$uri".into()));
 }
 
 #[cfg(feature = "ini")]

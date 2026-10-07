@@ -119,14 +119,16 @@ let config: HttpConfig = reader
 }
 ~~~
 
-Congif expands `$NAME` and `${NAME}` in source text first, parses the resulting document,
+Congif expands `${NAME}` in source text first, parses the resulting document,
 then deserializes into your schema. It does not read process environment or
 dotenv files itself.
 
 Expansion is single-pass: inserted values are never recursively expanded.
 Names use ASCII letters, digits and underscores, starting with a letter or
-underscore. `$$` inserts a literal dollar; `$20` remains literal text.
-Undefined variables and malformed expressions are errors.
+underscore. Only the braced form is a variable: a bare `$uri` or `$20` is
+text, as a redirect target or a price is written. `$$` inserts a literal
+dollar where `${` would otherwise open an expression. Undefined variables
+and malformed `${...}` expressions are errors.
 
 The JSON adapter tracks quoted strings and escapes inserted string content.
 Unquoted placeholders must contain a JSON number, boolean or `null`; they cannot
