@@ -61,6 +61,46 @@ separate format name. `YamlParser`, for example, handles both `.yaml` and `.yml`
 For already-read content, `parse` accepts a `ConfigSource` containing the source
 path and bytes, without opening a file.
 
+## Track includes in YAML and TOML
+
+`includes` is a reader keyword in YAML and TOML, including inside nested tables
+or objects. `include` is accepted as a compatibility alias. Give it a file path
+or a list of file paths; values that cannot deserialize into `PathBuf`, and
+empty paths, are errors even when your schema would ignore the field.
+
+~~~yaml
+includes:
+  - sites/*.yaml
+~~~
+
+~~~toml
+includes = ["settings/shared.toml", "settings/policy.toml"]
+~~~
+
+Paths are resolved beside the declaring source. The reader records
+`source → include paths` and `sources_for(owner)` exposes these dependencies
+alongside the source and its environment files. A successful preparation updates
+the index even when the typed configuration is unchanged or its schema/validation
+rejects the candidate. Old runtime configuration stays active, but the latest
+readable source replaces its dependency list: removed includes stop being watched
+and corrections to new known paths trigger another attempt. Unreadable syntax
+keeps the previously known dependencies; the root source remains watched.
+Parsing submitted content does not alter live dependencies.
+
+This is dependency discovery, not content merging. The reader consumes these
+reserved keys before schema decoding, so provider structs need no metadata fields
+even with `deny_unknown_fields`. Congif does not read or execute the included documents.
+Include content only affects typed equality when the domain parser actually
+incorporates that content into its result.
+
+With native watching, Continuo refreshes the same watcher's dependency list
+after initial preparation and subsequent source changes, including rejected
+preparation attempts. Globs such as `sites/*.yaml` are expanded into the existing
+file paths on each source read. Only those concrete files are subscribed; new
+files enter the list when the declaring source is read again. Directory matches
+are excluded, and directory subscriptions are not supported. Watching remains an owner's
+explicit opt-in through its config observer.
+
 ## Supply variables explicitly
 
 ~~~rust

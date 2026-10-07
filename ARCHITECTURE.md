@@ -121,6 +121,40 @@ remains a separate lifecycle operation.
 
 ## Optional native watching
 
+### Include dependencies
+
+The YAML and TOML adapters reserve `includes` (`include` is a compatibility
+alias) throughout their value trees. A declaration deserializes as one `PathBuf`
+or a list of them; malformed values and empty paths fail before schema decoding.
+The parser exposes this metadata through `ConfigParser::includes`. Other
+adapters opt in by implementing that hook. Built-in adapters consume the reserved
+keys before schema decoding, so even strict schemas need no metadata fields.
+The batch syntax cache pins both the cleaned value and its dependency metadata.
+Domain-specific merging is not implemented by Congif.
+
+`ConfigReader` owns `HashMap<PathBuf, Vec<PathBuf>>` for these dependencies.
+Relative entries are resolved beside their declaring source. Successful file
+syntax reads replace their list, including removal of old declarations, before
+schema decoding. Watch routing is not active runtime configuration: rejected
+schema/validation retains all typed snapshots but follows newly discovered paths
+so their correction triggers another attempt. Unreadable syntax retains the last
+known list; the root source remains watched. Submitted `parse` calls do not
+modify live dependencies. Included documents are
+not opened merely to discover dependencies, so dependencies declared inside
+them are the responsibility of their own parser/loader.
+
+`sources_for` combines this list with source and environment dependencies.
+Include notifications participate in the same source-invalidation check as the
+root document. `ConfigWatcher::update_owner_paths` replaces dependency routing
+without adding another callback or watcher. Continuo refreshes routing after
+startup preparation and watched attempts, including rejected candidates; removed dependencies stop
+notifying their old owner. Glob patterns resolve to existing concrete files on
+each source read; they are never passed to the watcher as selectors. A file
+created later is discovered by rereading the declaring source, not by watching
+its directory as an application dependency. Directory matches are excluded.
+Congif does not expose directory subscriptions. Native parent-directory watches
+remain an implementation detail to observe atomic replacement of named files.
+
 The `watch` feature exposes `watch::ConfigWatcher`. One watcher serves all
 registrations. `register::<Config>(paths, handler)` addresses a concrete config
 owner through `ConfigChanged<Config>`; multiple owners of the same type are

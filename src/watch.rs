@@ -95,17 +95,81 @@ impl ConfigWatcher {
         paths: impl IntoIterator<Item = PathBuf>,
         handler: impl Fn(SourceChanged) + Send + Sync + 'static,
     ) -> Result<&mut Self> {
-        let mut paths: Vec<_> =
-            paths.into_iter().map(source_path).collect::<Result<_>>()?;
-        paths.sort();
-        paths.dedup();
-        if paths.is_empty() {
-            return Err(Error::Watch(Box::new(std::io::Error::other(
-                "config watch requires at least one source",
-            ))));
+        let paths = normalized_paths(paths)?;
+        self.watch_directories(&paths)?;
+        tracing::debug!(owner = ?owner, paths = ?paths, directories = ?self.directories, "configuration sources watching registered");
+        self.registrations
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(Registration {
+                owner,
+                paths,
+                handler: Arc::new(move |paths| {
+                    handler(SourceChanged { owner, paths })
+                }),
+            });
+        Ok(self)
+    }
+
+    /// Replace a registered owner's dependency list after successful reading.
+    /// Keep its existing callback and watch new directories before dropping old
+    /// dependencies. Multiple registrations under this identity are updated.
+    pub fn update_owner_paths(
+        &mut self,
+        owner: TypeId,
+        paths: impl IntoIterator<Item = PathBuf>,
+    ) -> Result<&mut Self> {
+        let paths = normalized_paths(paths)?;
+        let unchanged = {
+            let registrations =
+                self.registrations.read().unwrap_or_else(|p| p.into_inner());
+            if !registrations
+                .iter()
+                .any(|registration| registration.owner == owner)
+            {
+                return Err(Error::msg(
+                    "configuration watch owner is not registered",
+                ));
+            }
+            registrations
+                .iter()
+                .filter(|registration| registration.owner == owner)
+                .all(|registration| registration.paths == paths)
+        };
+        if unchanged {
+            return Ok(self);
         }
+        self.watch_directories(&paths)?;
+        let required: HashSet<_> = {
+            let mut registrations =
+                self.registrations.write().unwrap_or_else(|p| p.into_inner());
+            replace_owner_paths(&mut registrations, owner, &paths);
+            registrations
+                .iter()
+                .flat_map(|registration| registration.paths.iter())
+                .filter_map(|path| path.parent().map(Path::to_owned))
+                .collect()
+        };
+        self.directories.retain(|directory| {
+            if required.contains(directory) {
+                return true;
+            }
+            if let Err(error) = self.watcher.unwatch(directory) {
+                tracing::warn!(path = %directory.display(), %error, "unused configuration directory watch retained");
+                return true;
+            }
+            false
+        });
+        tracing::debug!(owner = ?owner, paths = ?paths, "configuration watch dependencies updated");
+        Ok(self)
+    }
+
+    fn watch_directories(
+        &mut self,
+        paths: &[PathBuf],
+    ) -> Result<()> {
         let mut added: Vec<PathBuf> = Vec::new();
-        for path in &paths {
+        for path in paths {
             let directory = path
                 .parent()
                 .expect("source_path returns an absolute file path");
@@ -129,18 +193,7 @@ impl ConfigWatcher {
             added.push(directory.to_owned());
         }
         self.directories.extend(added);
-        tracing::debug!(owner = ?owner, paths = ?paths, directories = ?self.directories, "configuration sources watching registered");
-        self.registrations
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push(Registration {
-                owner,
-                paths,
-                handler: Arc::new(move |paths| {
-                    handler(SourceChanged { owner, paths })
-                }),
-            });
-        Ok(self)
+        Ok(())
     }
 
     /// Query source ownership from the existing registrations. An empty path
@@ -162,13 +215,41 @@ fn affected_owners(
     let mut owners = Vec::new();
     for registration in registrations.iter() {
         if (paths.is_empty()
-            || registration.paths.iter().any(|path| paths.contains(path)))
+            || registration.paths.iter().any(|source| paths.contains(source)))
             && !owners.contains(&registration.owner)
         {
             owners.push(registration.owner);
         }
     }
     owners
+}
+
+fn normalized_paths(
+    paths: impl IntoIterator<Item = PathBuf>
+) -> Result<Vec<PathBuf>> {
+    let mut paths: Vec<_> =
+        paths.into_iter().map(source_path).collect::<Result<_>>()?;
+    paths.sort();
+    paths.dedup();
+    if paths.is_empty() {
+        return Err(Error::Watch(Box::new(std::io::Error::other(
+            "config watch requires at least one source",
+        ))));
+    }
+    Ok(paths)
+}
+
+fn replace_owner_paths(
+    registrations: &mut [Registration],
+    owner: TypeId,
+    paths: &[PathBuf],
+) {
+    for registration in registrations
+        .iter_mut()
+        .filter(|registration| registration.owner == owner)
+    {
+        registration.paths = paths.to_vec();
+    }
 }
 
 fn source_path(path: PathBuf) -> Result<PathBuf> {

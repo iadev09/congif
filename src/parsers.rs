@@ -6,6 +6,9 @@ use std::sync::Arc;
 mod custom;
 pub use custom::{ConfigParser, ConfigSource};
 
+#[cfg(any(feature = "yaml", feature = "toml"))]
+mod includes;
+
 #[cfg(feature = "ini")]
 mod ini;
 #[cfg(feature = "ini")]

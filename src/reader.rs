@@ -12,11 +12,14 @@ use crate::{
 };
 
 type SourceBytes = Arc<tokio::sync::Mutex<HashMap<PathBuf, Arc<[u8]>>>>;
-type ParsedSources = Arc<
-    tokio::sync::Mutex<
-        HashMap<(PathBuf, usize, Arc<[u8]>), crate::ConfigValue>,
-    >,
->;
+type ParsedKey = (PathBuf, usize, Arc<[u8]>, bool);
+type ParsedSources = Arc<tokio::sync::Mutex<HashMap<ParsedKey, ParsedSource>>>;
+
+#[derive(Clone)]
+struct ParsedSource {
+    value: crate::ConfigValue,
+    includes: Vec<PathBuf>,
+}
 
 #[derive(Clone)]
 struct ConfigEntry {
@@ -63,6 +66,7 @@ pub struct ConfigReader {
     preparation: tokio::sync::Mutex<()>,
     sources: Option<SourceBytes>,
     parsed_sources: Option<ParsedSources>,
+    includes: Arc<RwLock<HashMap<PathBuf, Vec<PathBuf>>>>,
     environments: dotenw::EnvStore,
     environment_bindings: Arc<RwLock<HashMap<TypeId, dotenw::EnvHandle>>>,
     environment_catalog: Option<Arc<dotenw::CatalogSnapshot>>,
@@ -78,6 +82,7 @@ impl Default for ConfigReader {
             preparation: tokio::sync::Mutex::new(()),
             sources: None,
             parsed_sources: None,
+            includes: Arc::new(RwLock::new(HashMap::new())),
             environments: dotenw::EnvStore::new(),
             environment_bindings: Arc::new(RwLock::new(HashMap::new())),
             environment_catalog: None,
@@ -133,13 +138,15 @@ impl ConfigReader {
             .cloned())
     }
 
-    /// Configuration files plus the bound environment's complete file ancestry.
+    /// Configuration files, declared includes and the environment's file ancestry.
     /// Watchers use this list without asking providers to own environment state.
     pub fn sources_for(
         &self,
         owner: &dyn ConfigRegistration,
     ) -> Result<Vec<PathBuf>> {
-        let mut paths = vec![owner.source().path];
+        let source = owner.source().path;
+        let mut paths = self.includes_for(&source)?;
+        paths.push(source);
         if let Some(environment) = owner
             .environment()
             .cloned()
@@ -151,6 +158,24 @@ impl ConfigReader {
         paths.sort();
         paths.dedup();
         Ok(paths)
+    }
+
+    /// The last readable document's declared file dependencies, independent
+    /// of whether its typed configuration was accepted. This lets correction
+    /// of a newly discovered source trigger another preparation attempt.
+    /// Includes are resolved beside that source, not beside the process cwd.
+    /// Content merging remains the domain loader's responsibility.
+    pub fn includes_for(
+        &self,
+        source: impl AsRef<Path>,
+    ) -> Result<Vec<PathBuf>> {
+        Ok(self
+            .includes
+            .read()
+            .map_err(|_| Error::msg("configuration includes index poisoned"))?
+            .get(source.as_ref())
+            .cloned()
+            .unwrap_or_default())
     }
 
     /// Add all built-in parsers enabled by Cargo features.
@@ -262,6 +287,7 @@ impl ConfigReader {
             parsed_sources: Some(Arc::new(tokio::sync::Mutex::new(
                 HashMap::new(),
             ))),
+            includes: self.includes.clone(),
             configs: ConfigStore::new(self.configs.snapshot().as_ref().clone()),
             preparation: tokio::sync::Mutex::new(()),
             environments: self.environments.clone(),
@@ -278,19 +304,31 @@ impl ConfigReader {
             if let EnvironmentRefresh::Files(paths) = &refresh_environment
                 && candidate.contains_key(&id)
             {
-                let config_sources = [owner.source().path];
+                let source = owner.source().path;
+                let mut config_sources = vec![source.clone()];
+                config_sources.extend(self.includes_for(&source)?);
                 let mut config_changed = false;
                 for source in config_sources {
                     let parent = source
                         .parent()
                         .filter(|p| !p.as_os_str().is_empty())
                         .unwrap_or(Path::new("."));
-                    let parent = tokio::fs::canonicalize(parent)
-                        .await
-                        .map_err(|source_error| Error::Read {
-                            path: parent.to_owned(),
-                            source: source_error,
-                        })?;
+                    let parent = match tokio::fs::canonicalize(parent).await {
+                        Ok(parent) => parent,
+                        // A bad/missing include directory must not stop the
+                        // root source's correction from being read again.
+                        Err(error)
+                            if error.kind() == std::io::ErrorKind::NotFound =>
+                        {
+                            continue;
+                        }
+                        Err(source_error) => {
+                            return Err(Error::Read {
+                                path: parent.to_owned(),
+                                source: source_error,
+                            });
+                        }
+                    };
                     let Some(name) = source.file_name() else {
                         config_changed = true;
                         break;
@@ -343,6 +381,7 @@ impl ConfigReader {
                     parser,
                     ConfigSource { path: &file.path, bytes: &bytes },
                     variables.as_deref(),
+                    true,
                 )
                 .await?;
         }
@@ -588,6 +627,7 @@ impl ConfigReader {
                 parsers: self.parsers.clone(),
                 sources: self.sources.clone(),
                 parsed_sources: self.parsed_sources.clone(),
+                includes: self.includes.clone(),
                 configs: ConfigStore::new(
                     self.configs.snapshot().as_ref().clone(),
                 ),
@@ -605,7 +645,16 @@ impl ConfigReader {
             Err(Error::Read { path, source })
                 if source.kind() == std::io::ErrorKind::NotFound =>
             {
-                owner.absent_source().ok_or(Error::Read { path, source })?
+                let candidate = owner
+                    .absent_source()
+                    .ok_or(Error::Read { path, source })?;
+                self.includes
+                    .write()
+                    .map_err(|_| {
+                        Error::msg("configuration includes index poisoned")
+                    })?
+                    .remove(&owner.source().path);
+                candidate
             }
             other => other?,
         };
@@ -679,6 +728,7 @@ impl ConfigReader {
             parser,
             ConfigSource { path: &file.path, bytes: &bytes },
             self.variables.as_deref(),
+            true,
         )
         .await
     }
@@ -695,6 +745,7 @@ impl ConfigReader {
             parser,
             ConfigSource { path, bytes: &bytes },
             self.variables.as_deref(),
+            true,
         )
         .await
     }
@@ -712,6 +763,7 @@ impl ConfigReader {
             parser,
             ConfigSource { path, bytes: &bytes },
             Some(variables),
+            true,
         )
         .await
     }
@@ -725,6 +777,7 @@ impl ConfigReader {
             self.parser(source.path)?,
             source,
             self.variables.as_deref(),
+            false,
         )
         .await
     }
@@ -736,7 +789,8 @@ impl ConfigReader {
         source: ConfigSource<'_>,
         variables: &Variables,
     ) -> Result<T> {
-        self.decode(self.parser(source.path)?, source, Some(variables)).await
+        self.decode(self.parser(source.path)?, source, Some(variables), false)
+            .await
     }
 
     /// Parse submitted source using an owner's bound environment without publishing.
@@ -759,8 +813,13 @@ impl ConfigReader {
         } else {
             None
         };
-        self.decode(self.parser(source.path)?, source, variables.as_deref())
-            .await
+        self.decode(
+            self.parser(source.path)?,
+            source,
+            variables.as_deref(),
+            false,
+        )
+        .await
     }
 
     async fn decode<T: DeserializeOwned>(
@@ -768,12 +827,26 @@ impl ConfigReader {
         parser: &dyn ConfigParser,
         source: ConfigSource<'_>,
         variables: Option<&Variables>,
+        track_sources: bool,
     ) -> Result<T> {
-        let value = self.syntax(parser, source, variables).await?;
-        T::deserialize(value).map_err(|error| Error::Deserialize {
-            path: source.path.to_owned(),
-            source: error,
-        })
+        let parsed =
+            self.syntax(parser, source, variables, track_sources).await?;
+        let result = T::deserialize(parsed.value).map_err(|error| {
+            Error::Deserialize { path: source.path.to_owned(), source: error }
+        })?;
+        Ok(result)
+    }
+
+    fn record_includes(
+        &self,
+        source: &Path,
+        paths: &[PathBuf],
+    ) -> Result<()> {
+        self.includes
+            .write()
+            .map_err(|_| Error::msg("configuration includes index poisoned"))?
+            .insert(source.to_owned(), paths.to_vec());
+        Ok(())
     }
 
     async fn syntax(
@@ -781,7 +854,8 @@ impl ConfigReader {
         parser: &dyn ConfigParser,
         source: ConfigSource<'_>,
         variables: Option<&Variables>,
-    ) -> Result<crate::ConfigValue> {
+        track_sources: bool,
+    ) -> Result<ParsedSource> {
         let expanded;
         let source = if let Some(variables) = variables {
             let text = std::str::from_utf8(source.bytes).map_err(|error| {
@@ -807,14 +881,30 @@ impl ConfigReader {
             source.path.to_owned(),
             parser_id,
             Arc::<[u8]>::from(source.bytes),
+            track_sources,
         );
         if let Some(value) = parsed.as_ref().and_then(|cache| cache.get(&key)) {
+            if track_sources {
+                self.record_includes(source.path, &value.includes)?;
+            }
             tracing::trace!(path = %source.path.display(), "configuration syntax reused within preparation batch");
             return Ok(value.clone());
         }
-        let value = parser.parse(source).await.map_err(|error| {
+        let mut value = parser.parse(source).await.map_err(|error| {
             Error::Parse { path: source.path.to_owned(), source: error }
         })?;
+        let includes = parser.includes(&mut value).map_err(|error| {
+            Error::Parse { path: source.path.to_owned(), source: error }
+        })?;
+        let includes = if track_sources {
+            let includes =
+                crate::source::resolve_includes(source.path, includes).await?;
+            self.record_includes(source.path, &includes)?;
+            includes
+        } else {
+            includes
+        };
+        let value = ParsedSource { value, includes };
         tracing::trace!(path = %source.path.display(), "configuration source parsed");
         if let Some(cache) = parsed.as_mut() {
             cache.insert(key, value.clone());

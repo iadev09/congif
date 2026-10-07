@@ -1,0 +1,3 @@
+includes: first.yaml
+policy:
+  include: [second.yaml, first.yaml]

@@ -8,6 +8,13 @@ impl ConfigParser for YamlParser {
         &["yaml", "yml"]
     }
 
+    fn includes(
+        &self,
+        value: &mut ConfigValue,
+    ) -> Result<Vec<std::path::PathBuf>, BoxError> {
+        super::includes::paths(value)
+    }
+
     async fn parse(
         &self,
         source: ConfigSource<'_>,

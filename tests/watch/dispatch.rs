@@ -131,3 +131,67 @@ fn rescan_notifies_all_owners_without_specific_paths() {
     );
     assert_eq!(messages.lock().unwrap().len(), 1);
 }
+
+#[test]
+fn changing_include_dependencies_replaces_paths_without_adding_callbacks() {
+    struct First;
+    struct Second;
+    let first = Arc::new(Mutex::new(Vec::new()));
+    let second = Arc::new(Mutex::new(Vec::new()));
+    let mut first_target = target("/config/old.yaml", first.clone());
+    first_target.owner = TypeId::of::<First>();
+    let mut second_target = target("/config/old.yaml", second.clone());
+    second_target.owner = TypeId::of::<Second>();
+    let mut registrations = [first_target, second_target];
+    replace_owner_paths(
+        &mut registrations,
+        TypeId::of::<First>(),
+        &[PathBuf::from("/config/new.yaml")],
+    );
+    for path in ["/config/old.yaml", "/config/new.yaml"] {
+        dispatch(
+            &registrations,
+            &Event::new(EventKind::Modify(notify::event::ModifyKind::Any))
+                .add_path(PathBuf::from(path)),
+        );
+    }
+    assert_eq!(
+        *first.lock().unwrap(),
+        vec![vec![PathBuf::from("/config/new.yaml")]]
+    );
+    assert_eq!(
+        *second.lock().unwrap(),
+        vec![vec![PathBuf::from("/config/old.yaml")]]
+    );
+}
+
+#[test]
+fn resolved_includes_do_not_subscribe_to_new_files_in_the_directory() {
+    let messages = Arc::new(Mutex::new(Vec::new()));
+    let targets = [target("/config/sites/known.yaml", messages.clone())];
+    for path in [
+        "/config/sites/new.yaml",
+        "/config/sites/new.json",
+        "/config/sites/nested/new.yaml",
+        "/config/sites/known.yaml",
+    ] {
+        dispatch(
+            &targets,
+            &Event::new(EventKind::Create(notify::event::CreateKind::File))
+                .add_path(PathBuf::from(path)),
+        );
+    }
+    assert_eq!(messages.lock().unwrap().len(), 1);
+    assert_eq!(
+        affected_owners(&targets, &[PathBuf::from("/config/sites/known.yaml")]),
+        [TypeId::of::<()>()]
+    );
+    assert!(
+        affected_owners(&targets, &[PathBuf::from("/config/sites/new.json")])
+            .is_empty()
+    );
+    assert!(
+        affected_owners(&targets, &[PathBuf::from("/config/sites/new.yaml")])
+            .is_empty()
+    );
+}

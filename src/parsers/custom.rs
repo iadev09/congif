@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::{BoxError, ConfigValue, async_trait};
 
@@ -25,6 +25,18 @@ pub trait ConfigParser: Send + Sync {
     /// File extensions this parser handles, without a leading dot.
     /// Explicit formats select a registered key; direct path reads use its extension.
     fn extensions(&self) -> &[&str];
+
+    /// File dependencies declared by this document. Paths are relative to the
+    /// source file unless absolute. The reader tracks them without merging or
+    /// executing their contents. Custom formats opt in explicitly.
+    /// Built-in YAML/TOML adapters consume the reserved keys before schema
+    /// decoding, so provider structs do not need metadata fields.
+    fn includes(
+        &self,
+        _value: &mut ConfigValue,
+    ) -> Result<Vec<PathBuf>, BoxError> {
+        Ok(Vec::new())
+    }
 
     async fn parse(
         &self,
