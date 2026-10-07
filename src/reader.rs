@@ -2,7 +2,7 @@ use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use serde::de::DeserializeOwned;
 
@@ -71,7 +71,14 @@ pub struct ConfigReader {
     environment_bindings: Arc<RwLock<HashMap<TypeId, dotenw::EnvHandle>>>,
     environment_catalog: Option<Arc<dotenw::CatalogSnapshot>>,
     variables: Option<dotenw::Snapshot>,
+    /// One node per program an owner declared, by owner and program name.
+    programs: Programs,
+    /// Program nodes a source notification refreshed, until the runtime
+    /// takes them to tell their owners.
+    program_changes: Arc<Mutex<Vec<dotenw::EnvId>>>,
 }
+
+type Programs = Arc<RwLock<HashMap<(TypeId, String), dotenw::EnvHandle>>>;
 
 impl Default for ConfigReader {
     fn default() -> Self {
@@ -87,6 +94,8 @@ impl Default for ConfigReader {
             environment_bindings: Arc::new(RwLock::new(HashMap::new())),
             environment_catalog: None,
             variables: None,
+            programs: Arc::new(RwLock::new(HashMap::new())),
+            program_changes: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -275,6 +284,7 @@ impl ConfigReader {
                 .await
                 .map_err(Error::validation)??;
                 if let Some((_, changed)) = refreshed {
+                    self.record_program_changes(&changed)?;
                     changed_environments = changed;
                 }
             }
@@ -294,6 +304,8 @@ impl ConfigReader {
             environment_bindings: Arc::new(RwLock::new(bindings.clone())),
             environment_catalog: Some(Arc::new(self.environments.snapshot())),
             variables: None,
+            programs: self.programs.clone(),
+            program_changes: self.program_changes.clone(),
         };
         let mut candidate = self.configs.snapshot().as_ref().clone();
         let mut changed = Vec::new();
@@ -647,6 +659,8 @@ impl ConfigReader {
             environment_bindings: self.environment_bindings.clone(),
             environment_catalog: self.environment_catalog.clone(),
             variables: Some(variables),
+            programs: self.programs.clone(),
+            program_changes: self.program_changes.clone(),
         }))
     }
 
@@ -873,6 +887,155 @@ impl ConfigReader {
             Error::Deserialize { path: source.path.to_owned(), source: error }
         })?;
         Ok(result)
+    }
+
+    /// Register or replace the program environments an owner declares from
+    /// its applied configuration: one node per program name, layered like
+    /// the reader's own `.env` and detached from the host's values, with
+    /// `${NAME}` expanding from the owner's bound configuration environment.
+    /// A program no longer declared keeps its node idle; the store has no
+    /// removal, and the owner will not ask for it again.
+    pub fn prepare_programs(
+        &self,
+        owner: TypeId,
+        programs: Vec<crate::ProgramEnvironment>,
+    ) -> Result<()> {
+        let base = self.environment_for(owner)?;
+        let mut registered = self
+            .programs
+            .write()
+            .map_err(|_| Error::msg("program environments poisoned"))?;
+        for program in programs {
+            let mut recipe = dotenw::Environment::new().detached();
+            if let Some(base) = &base {
+                recipe = recipe.with_base(base);
+            }
+            for file in &program.files {
+                recipe = recipe
+                    .with_environment_file(file, dotenw::MergeMode::Override);
+            }
+            if !program.values.is_empty() {
+                recipe = recipe
+                    .with_values(program.values, dotenw::MergeMode::Override);
+            }
+            match registered.get(&(owner, program.name.clone())) {
+                Some(handle) => handle.replace(recipe)?,
+                None => {
+                    let handle = self.environments.register(recipe)?;
+                    registered.insert((owner, program.name), handle);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The environment a program is started with, as last prepared.
+    pub fn program_snapshot(
+        &self,
+        owner: TypeId,
+        program: &str,
+    ) -> Result<dotenw::Snapshot> {
+        let handle = self
+            .programs
+            .read()
+            .map_err(|_| Error::msg("program environments poisoned"))?
+            .get(&(owner, program.to_owned()))
+            .cloned()
+            .ok_or_else(|| {
+                Error::msg(format!(
+                    "program environment '{program}' is not declared"
+                ))
+            })?;
+        Ok(handle.snapshot()?)
+    }
+
+    /// Every file an owner's programs read, for the owner's watch registration
+    /// beside its configuration sources.
+    pub fn program_sources(
+        &self,
+        owner: TypeId,
+    ) -> Result<Vec<PathBuf>> {
+        let registered = self
+            .programs
+            .read()
+            .map_err(|_| Error::msg("program environments poisoned"))?;
+        let mut paths = Vec::new();
+        for ((program_owner, _), handle) in registered.iter() {
+            if *program_owner == owner {
+                paths.extend(handle.sources()?);
+            }
+        }
+        paths.sort();
+        paths.dedup();
+        Ok(paths)
+    }
+
+    /// Re-read every program's files for an owner, as a reload does for its
+    /// configuration sources.
+    pub fn refresh_programs(
+        &self,
+        owner: TypeId,
+    ) -> Result<()> {
+        let handles: Vec<_> = self
+            .programs
+            .read()
+            .map_err(|_| Error::msg("program environments poisoned"))?
+            .iter()
+            .filter(|((program_owner, _), _)| *program_owner == owner)
+            .map(|(_, handle)| handle.clone())
+            .collect();
+        if !handles.is_empty() {
+            dotenw::EnvHandle::refresh_many(&handles)?;
+        }
+        Ok(())
+    }
+
+    /// The programs a source notification re-read since the last call, with
+    /// their new snapshots: the runtime tells each owner.
+    pub fn take_program_changes(
+        &self
+    ) -> Result<Vec<(TypeId, String, dotenw::Snapshot)>> {
+        let changed = std::mem::take(
+            &mut *self
+                .program_changes
+                .lock()
+                .map_err(|_| Error::msg("program changes poisoned"))?,
+        );
+        if changed.is_empty() {
+            return Ok(Vec::new());
+        }
+        let registered = self
+            .programs
+            .read()
+            .map_err(|_| Error::msg("program environments poisoned"))?;
+        let mut programs = Vec::new();
+        for ((owner, program), handle) in registered.iter() {
+            if changed.contains(&handle.id()) {
+                programs.push((*owner, program.clone(), handle.snapshot()?));
+            }
+        }
+        Ok(programs)
+    }
+
+    fn record_program_changes(
+        &self,
+        changed: &[dotenw::EnvId],
+    ) -> Result<()> {
+        let registered = self
+            .programs
+            .read()
+            .map_err(|_| Error::msg("program environments poisoned"))?;
+        let mut pending = self
+            .program_changes
+            .lock()
+            .map_err(|_| Error::msg("program changes poisoned"))?;
+        for handle in registered.values() {
+            if changed.contains(&handle.id()) && !pending.contains(&handle.id())
+            {
+                pending.push(handle.id());
+            }
+        }
+        Ok(())
     }
 
     fn record_includes(

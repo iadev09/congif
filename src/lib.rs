@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 mod configurable;
+mod environmental;
 mod error;
 pub mod parsers;
 mod reader;
@@ -27,12 +28,13 @@ compile_error!(
 );
 
 pub use async_trait::async_trait;
-/// The environment store the reader's variables come from, for owners that
-/// register program environments of their own.
-pub use dotenw;
 pub use configurable::{
     ConfigObserver, ConfigRegistration, Configurable, export,
 };
+/// The environment store the reader's variables come from, for owners that
+/// register program environments of their own.
+pub use dotenw;
+pub use environmental::{Environmental, ProgramEnvironment};
 pub use error::{BoxError, Error, Result};
 pub use parsers::{ConfigParser, ConfigSource};
 pub use reader::{ConfigReader, PreparedConfig};

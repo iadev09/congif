@@ -121,6 +121,29 @@ remains a separate lifecycle operation.
 
 ## Optional native watching
 
+### Program environments
+
+An owner may run programs — a PHP application or script, a task's process —
+each started with an environment of its own, declared in the owner's
+configuration as `env_file` entries and inline values. Such an owner
+implements `Environmental`: `program_environments()` lists the declarations
+from the applied configuration, and `environment_changed(program, snapshot)`
+is told when one of a program's files was re-read. The runtime asks after
+`configure` and after a reload and hands the list to
+`ConfigReader::prepare_programs(owner, programs)`, which keeps one dotenw node
+per `(owner, program)`: registered once, `replace`d when the declaration
+changed, never a node per run. Each node is detached — only what its files and
+values declare is in the snapshot, while `${NAME}` expands from the owner's
+bound configuration environment — and layered like the reader's own `.env`:
+`<file>` then `<file>.<environment>`, both registered whether or not they
+exist yet, so a file that appears later is read. `program_snapshot(owner,
+program)` is what a program is started with; `program_sources(owner)` are the
+paths the owner's watch registration adds beside its configuration sources.
+A notification for one of them goes through the same `prepare_changed_sources`
+as the root document: the store refreshes every node reading that file once,
+and `take_program_changes()` hands the runtime the `(owner, program,
+snapshot)` triples to deliver. `refresh_programs(owner)` re-reads a reload.
+
 ### Include dependencies
 
 The YAML and TOML adapters reserve `includes` (`include` is a compatibility
