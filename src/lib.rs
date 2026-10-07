@@ -27,9 +27,7 @@ compile_error!(
 );
 
 pub use async_trait::async_trait;
-#[doc(hidden)]
-pub use configurable::ConfigRegistration;
-pub use configurable::{ConfigObserver, Configurable};
+pub use configurable::{ConfigObserver, ConfigRegistration, Configurable};
 pub use error::{BoxError, Error, Result};
 pub use parsers::{ConfigParser, ConfigSource};
 pub use reader::{ConfigReader, PreparedConfig};

@@ -80,10 +80,13 @@ pub trait ConfigObserver: Configurable {
     ) -> Result<()>;
 }
 
-/// Erased lifecycle adapter for heterogeneous registrations. This does not own
-/// config storage; ConfigReader does. Applications implement Configurable,
-/// not this infrastructure contract.
-#[doc(hidden)]
+/// The erased form of a [`Configurable`], implemented for every one of them.
+///
+/// Runtimes hand configurable components to the reader through this trait —
+/// a provider hook returns `Option<&dyn ConfigRegistration>`, a batch takes a
+/// slice of them — so heterogeneous components can be prepared together. It
+/// owns no configuration; the reader does. Applications implement
+/// `Configurable` and return `self` where a registration is asked for.
 #[async_trait]
 pub trait ConfigRegistration: Any + Send + Sync {
     fn source(&self) -> ConfigFile;
