@@ -52,6 +52,10 @@ application/runtime decides whether to execute a reload regardless of equality.
    handles keep the previous generation alive.
 
 Read, parse, schema and validation errors do not publish a partial config.
+`Error::Validation` is a provider's verdict on a candidate (`Error::validation`
+wraps an error value, `Error::invalid` a sentence); `Error::Message` is every
+other refusal — an apply step, a poisoned lock, an owner never prepared — and
+is never dressed as validation.
 Preparation batches collect affected owners' declared sources before their
 `configure` calls. File bytes are pinned once. Format-neutral syntax trees are
 shared within that batch by source path, parser identity and expanded content; each owner still
@@ -96,6 +100,11 @@ They do not boot providers, servers or applications, and use no sleeps.
 
 `Configurable` declares its associated Serde `Config` type and one `source()`.
 The reader reads, deserializes and validates before returning a candidate.
+A source that does not exist is a read error unless the owner answers
+`absent_source()` with the configuration that stands in its place; that value is
+validated like a read one, and a batch skips pinning the missing file so the
+owner, not the batch, decides. `congif::export` turns any serializable config
+into the exported value tree for owners that expose it whole.
 Preparation never invokes lifecycle callbacks. After the entire batch is prepared,
 `configure(&Self::Config)` applies startup resources. `configure_registered` pins
 and acknowledges the candidate only on success. Providers do not implement a
