@@ -55,6 +55,8 @@ pub enum Error {
     Validation(#[source] BoxError),
     #[error("{0}")]
     Message(String),
+    #[error("configuration export failed: {0}")]
+    Export(#[source] BoxError),
     #[cfg(feature = "watch")]
     #[error("config watch failed: {0}")]
     Watch(#[source] BoxError),

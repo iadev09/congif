@@ -58,6 +58,8 @@ pub trait Configurable: Send + Sync {
     /// Opt in to dot-path access for hosted applications and language bridges.
     /// Export only fields intended for those consumers. Called during
     /// preparation, never during lookup; typed Rust access needs no export.
+    /// When the whole configuration is meant for them and it serializes,
+    /// `congif::export(config)` is the one-line body.
     fn export_config(
         &self,
         _config: &Self::Config,
@@ -205,4 +207,17 @@ fn snake_case(name: &str) -> String {
         previous = Some(current);
     }
     result
+}
+
+/// The value tree dot-path lookup reads, from any serializable configuration.
+///
+/// The body of `Configurable::export_config` for an owner whose whole config
+/// is meant for hosted consumers; owners exposing a subset still build their
+/// own tree.
+pub fn export<T: serde::Serialize>(
+    config: &T
+) -> Result<Option<crate::ConfigValue>> {
+    serde_value::to_value(config)
+        .map(Some)
+        .map_err(|error| crate::Error::Export(Box::new(error)))
 }

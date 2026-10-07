@@ -207,7 +207,9 @@ Rust integrations can expose configuration to PHP, Lua, JavaScript or other
 hosted applications through `Configurable::export_config`. The owner returns
 an optional `ConfigValue` tree of the fields intended for those consumers.
 That tree is prepared and published with the typed snapshot, not reconstructed
-on every lookup. Owners which do not export remain typed-only.
+on every lookup. Owners which do not export remain typed-only. When the whole
+configuration is meant for those consumers and derives `Serialize`,
+`congif::export(config)` is the entire body of `export_config`.
 
 ~~~rust
 let listen = reader.config::<std::net::SocketAddr>("http.listen")?;
