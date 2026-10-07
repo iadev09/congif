@@ -27,6 +27,9 @@ compile_error!(
 );
 
 pub use async_trait::async_trait;
+/// The environment store the reader's variables come from, for owners that
+/// register program environments of their own.
+pub use dotenw;
 pub use configurable::{
     ConfigObserver, ConfigRegistration, Configurable, export,
 };
