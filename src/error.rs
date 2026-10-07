@@ -5,6 +5,28 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("prepared configuration belongs to another reader")]
+    ForeignPreparedConfig,
+    #[error(
+        "invalid configuration key '{0}' (expected nonempty dot-separated components)"
+    )]
+    InvalidKey(String),
+    #[error(
+        "invalid configuration namespace '{0}' (expected a nonempty name without dots)"
+    )]
+    InvalidNamespace(String),
+    #[error("configuration namespace '{0}' is already owned")]
+    DuplicateNamespace(String),
+    #[error(
+        "configuration key '{key}' cannot be converted to {expected}: {source}"
+    )]
+    Lookup {
+        key: String,
+        expected: &'static str,
+        source: serde_value::DeserializerError,
+    },
+    #[error("configuration environment failed: {0}")]
+    Environment(#[from] dotenw::Error),
     #[error("configuration for owner '{0}' has not been prepared")]
     MissingConfig(&'static str),
     #[error("could not read config {path}: {source}")]
@@ -19,9 +41,15 @@ pub enum Error {
     DuplicateParser(String),
     #[error("invalid config extension '{0}' (use a bare ASCII extension)")]
     InvalidExtension(String),
+    #[error("config parser must declare at least one file extension")]
+    MissingExtensions,
     #[error("config variable '{0}' is not defined")]
     UndefinedVariable(String),
-    #[error("invalid config variable expression (expected ${{NAME}})")]
+    #[error(
+        "unquoted JSON variable '{0}' must contain a number, boolean or null"
+    )]
+    InvalidVariableValue(String),
+    #[error("invalid config variable expression (expected $NAME or ${{NAME}})")]
     InvalidVariable,
     #[error("config validation failed: {0}")]
     Validation(#[source] BoxError),

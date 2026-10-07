@@ -129,6 +129,7 @@ impl ConfigWatcher {
             added.push(directory.to_owned());
         }
         self.directories.extend(added);
+        tracing::debug!(owner = ?owner, paths = ?paths, directories = ?self.directories, "configuration sources watching registered");
         self.registrations
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -203,6 +204,7 @@ fn dispatch(
     if matches!(event.kind, EventKind::Access(_)) && !event.need_rescan() {
         return;
     }
+    let mut logged = false;
     for registration in registrations {
         let paths: Vec<_> = registration
             .paths
@@ -216,6 +218,10 @@ fn dispatch(
             .cloned()
             .collect();
         if !paths.is_empty() {
+            if !logged {
+                tracing::trace!(kind = ?event.kind, paths = ?event.paths, "registered configuration source notification received");
+                logged = true;
+            }
             (registration.handler)(paths);
         }
     }

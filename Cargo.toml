@@ -27,11 +27,13 @@ xml = ["dep:roxmltree"]
 watch = ["dep:notify"]
 
 [dependencies]
+dotenw = { path = "../dotenw" }
 serde = { version = "1", features = ["derive", "rc"] }
 serde-value = "0.7"
 arc-swap = "1"
 async-trait = "0.1"
 thiserror = "2"
+tracing = "0.1"
 tokio = { version = "1", features = ["fs", "sync"] }
 serde_yaml = { version = "0.9", optional = true }
 toml = { version = "1", optional = true }

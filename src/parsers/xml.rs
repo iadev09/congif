@@ -11,6 +11,10 @@ pub struct XmlParser;
 
 #[async_trait]
 impl ConfigParser for XmlParser {
+    fn extensions(&self) -> &[&str] {
+        &["xml"]
+    }
+
     async fn parse(
         &self,
         source: ConfigSource<'_>,

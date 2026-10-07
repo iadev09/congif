@@ -1,4 +1,4 @@
-use congif::{ConfigReader, Configurable, Result, async_trait};
+use congif::{Configurable, Result, async_trait};
 
 struct HttpProvider;
 struct HTTPProvider;
@@ -11,9 +11,16 @@ macro_rules! configuration_owner {
         impl Configurable for $owner {
             type Config = ();
 
+            fn source(&self) -> congif::ConfigFile {
+                congif::ConfigFile {
+                    path: "example.json".into(),
+                    format: congif::Format::Json,
+                }
+            }
+
             async fn configure(
                 &self,
-                _reader: &ConfigReader,
+                _config: &(),
             ) -> Result<()> {
                 Ok(())
             }
@@ -29,13 +36,20 @@ configuration_owner!(GenericProvider<HttpProvider>);
 impl Configurable for NamedProvider {
     type Config = ();
 
+    fn source(&self) -> congif::ConfigFile {
+        congif::ConfigFile {
+            path: "example.json".into(),
+            format: congif::Format::Json,
+        }
+    }
+
     fn namespace(&self) -> String {
         "http".into()
     }
 
     async fn configure(
         &self,
-        _reader: &ConfigReader,
+        _config: &(),
     ) -> Result<()> {
         Ok(())
     }

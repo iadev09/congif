@@ -4,6 +4,10 @@ pub struct YamlParser;
 
 #[async_trait]
 impl ConfigParser for YamlParser {
+    fn extensions(&self) -> &[&str] {
+        &["yaml", "yml"]
+    }
+
     async fn parse(
         &self,
         source: ConfigSource<'_>,

@@ -62,6 +62,34 @@ fn shared_file_selects_all_owners_without_duplicate_service_ids() {
 }
 
 #[test]
+fn shared_environment_selects_every_dependent_config_only_once() {
+    struct Http;
+    struct Counter;
+    let messages = Arc::new(Mutex::new(Vec::new()));
+    let mut http = target("/config/application.env", messages.clone());
+    http.owner = TypeId::of::<Http>();
+    http.paths.push(PathBuf::from("/config/http.json"));
+    let mut counter = target("/config/application.env", messages);
+    counter.owner = TypeId::of::<Counter>();
+    counter.paths.push(PathBuf::from("/config/counter.json"));
+    let registrations = [http, counter];
+    assert_eq!(
+        affected_owners(
+            &registrations,
+            &[
+                PathBuf::from("/config/application.env"),
+                PathBuf::from("/config/application.env"),
+            ]
+        ),
+        [TypeId::of::<Http>(), TypeId::of::<Counter>()]
+    );
+    assert_eq!(
+        affected_owners(&registrations, &[PathBuf::from("/config/http.json")]),
+        [TypeId::of::<Http>()]
+    );
+}
+
+#[test]
 fn atomic_rename_notifies_destination_owner_but_reads_do_not() {
     let messages = Arc::new(Mutex::new(Vec::new()));
     let targets = [target("/config/cache.yaml", messages.clone())];

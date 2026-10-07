@@ -13,8 +13,21 @@ pub struct ConfigSource<'a> {
 /// No built-in format feature is required.
 #[async_trait]
 pub trait ConfigParser: Send + Sync {
+    /// Expand caller-owned variables before parsing. Override for format-specific escaping.
+    fn expand_variables(
+        &self,
+        text: &str,
+        variables: &crate::Variables,
+    ) -> crate::Result<String> {
+        crate::variables::expand(text, variables)
+    }
+
+    /// File extensions this parser handles, without a leading dot.
+    /// Explicit formats select a registered key; direct path reads use its extension.
+    fn extensions(&self) -> &[&str];
+
     async fn parse(
         &self,
         source: ConfigSource<'_>,
-    ) -> std::result::Result<ConfigValue, BoxError>;
+    ) -> Result<ConfigValue, BoxError>;
 }

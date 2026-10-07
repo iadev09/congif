@@ -8,6 +8,8 @@ mod configurable;
 mod error;
 pub mod parsers;
 mod reader;
+mod source;
+mod state;
 mod store;
 mod variables;
 #[cfg(all(
@@ -25,10 +27,14 @@ compile_error!(
 );
 
 pub use async_trait::async_trait;
-pub use configurable::{ConfigOwner, Configurable};
+#[doc(hidden)]
+pub use configurable::ConfigRegistration;
+pub use configurable::{ConfigObserver, Configurable};
 pub use error::{BoxError, Error, Result};
 pub use parsers::{ConfigParser, ConfigSource};
-pub use reader::ConfigReader;
+pub use reader::{ConfigReader, PreparedConfig};
 pub use serde_value::Value as ConfigValue;
+pub use source::{ConfigFile, Format};
+pub use state::HasConfigReader;
 pub use store::{ConfigStore, Snapshot};
 pub use variables::Variables;

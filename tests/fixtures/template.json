@@ -1,0 +1,9 @@
+{
+  "text": "$TEXT",
+  "suffix": "${ROOT}_backup",
+  "number":$NUMBER,
+  "enabled": ${ENABLED},
+  "optional": $OPTIONAL,
+  "literal": "$$TEXT/$20",
+  "escaped_quote": "quote: \"$TEXT"
+}

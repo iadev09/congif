@@ -30,6 +30,10 @@ struct FixtureParser;
 
 #[async_trait]
 impl ConfigParser for FixtureParser {
+    fn extensions(&self) -> &[&str] {
+        &["fixture"]
+    }
+
     async fn parse(
         &self,
         _: ConfigSource<'_>,
@@ -40,8 +44,8 @@ impl ConfigParser for FixtureParser {
 
 #[tokio::test]
 async fn external_parser_produces_owned_typed_config() {
-    let mut reader = ConfigReader::new();
-    reader.register("fixture", FixtureParser).unwrap();
+    let mut reader = ConfigReader::new().with_builtin_parsers().unwrap();
+    reader.register(FixtureParser).unwrap();
     let settings: Settings = reader
         .parse(ConfigSource { path: Path::new("settings.FIXTURE"), bytes: b"" })
         .await
@@ -51,24 +55,127 @@ async fn external_parser_produces_owned_typed_config() {
 
 #[test]
 fn duplicate_parser_does_not_replace_the_registered_adapter() {
-    let mut reader = ConfigReader::new();
-    reader.register("fixture", FixtureParser).unwrap();
+    let mut reader = ConfigReader::new().with_builtin_parsers().unwrap();
+    reader.register(FixtureParser).unwrap();
     assert!(matches!(
-        reader.register("FIXTURE", FixtureParser),
+        reader.register(AliasParser(&["FIXTURE"])),
         Err(Error::DuplicateParser(_))
     ));
     assert!(matches!(
-        reader.register(".fixture", FixtureParser),
+        reader.register(AliasParser(&[".fixture"])),
         Err(Error::InvalidExtension(_))
+    ));
+}
+
+struct AliasParser(&'static [&'static str]);
+
+#[async_trait]
+impl ConfigParser for AliasParser {
+    fn extensions(&self) -> &[&str] {
+        self.0
+    }
+
+    async fn parse(
+        &self,
+        source: ConfigSource<'_>,
+    ) -> Result<ConfigValue, BoxError> {
+        FixtureParser.parse(source).await
+    }
+}
+
+#[tokio::test]
+async fn parser_declared_aliases_select_the_same_adapter() {
+    let mut reader = ConfigReader::new().with_builtin_parsers().unwrap();
+    reader.register(AliasParser(&["fixture", "custom", "CUSTOM"])).unwrap();
+    for path in ["settings.fixture", "settings.CUSTOM"] {
+        let settings: Settings = reader
+            .parse(ConfigSource { path: Path::new(path), bytes: b"" })
+            .await
+            .unwrap();
+        assert_eq!(settings, Settings { cache: 2, http: 2 });
+    }
+}
+
+#[tokio::test]
+async fn rejected_alias_registration_installs_no_partial_mapping() {
+    let mut reader = ConfigReader::new().with_builtin_parsers().unwrap();
+    reader.register(FixtureParser).unwrap();
+    assert!(matches!(
+        reader.register(AliasParser(&["custom", "FIXTURE"])),
+        Err(Error::DuplicateParser(_))
+    ));
+    assert!(matches!(
+        reader.register(AliasParser(&["custom", ".invalid"])),
+        Err(Error::InvalidExtension(_))
+    ));
+    assert!(matches!(
+        reader.register(AliasParser(&[])),
+        Err(Error::MissingExtensions)
+    ));
+    assert!(matches!(
+        reader
+            .parse::<Settings>(ConfigSource {
+                path: Path::new("settings.custom"),
+                bytes: b"",
+            })
+            .await,
+        Err(Error::UnsupportedFormat { .. })
     ));
 }
 
 #[tokio::test]
 async fn unknown_format_is_rejected_before_io() {
-    let reader = ConfigReader::new();
+    let reader = ConfigReader::new().with_builtin_parsers().unwrap();
     assert!(matches!(
         reader.read::<Settings>("missing.unregistered").await,
         Err(Error::UnsupportedFormat { .. })
+    ));
+}
+
+#[cfg(feature = "yaml")]
+#[tokio::test]
+async fn builtins_select_both_yaml_extensions_without_individual_registration()
+{
+    let reader = ConfigReader::new().with_builtin_parsers().unwrap();
+    let bytes = std::fs::read(fixture("settings.yaml")).unwrap();
+    for path in ["settings.yaml", "settings.YML"] {
+        let settings: Settings = reader
+            .parse(ConfigSource { path: Path::new(path), bytes: &bytes })
+            .await
+            .unwrap();
+        assert_eq!(settings, Settings { cache: 2, http: 2 });
+    }
+}
+
+#[cfg(feature = "json")]
+#[test]
+fn enabled_builtin_parser_cannot_be_replaced_by_custom_registration() {
+    let mut reader = ConfigReader::new().with_builtin_parsers().unwrap();
+    assert!(matches!(
+        reader.register(AliasParser(&["JSON"])),
+        Err(Error::DuplicateParser(_))
+    ));
+}
+
+#[cfg(feature = "json")]
+#[tokio::test]
+async fn new_reader_remains_empty_even_when_format_features_are_enabled() {
+    for reader in [ConfigReader::new(), ConfigReader::default()] {
+        assert!(matches!(
+            reader.read::<Settings>("missing.json").await,
+            Err(Error::UnsupportedFormat { .. })
+        ));
+    }
+}
+
+#[cfg(feature = "json")]
+#[test]
+fn adding_builtins_rejects_conflicting_custom_parser_mappings() {
+    let mut reader = ConfigReader::new();
+    reader.register(AliasParser(&["json"])).unwrap();
+    assert!(matches!(
+        reader.with_builtin_parsers(),
+        Err(Error::DuplicateParser(_))
     ));
 }
 
@@ -112,8 +219,7 @@ fn snapshot_clone_does_not_require_config_clone() {
 #[cfg(feature = "json")]
 #[tokio::test]
 async fn provider_serde_rules_reject_unknown_fields() {
-    let mut reader = ConfigReader::new();
-    reader.register("json", congif::parsers::JsonParser).unwrap();
+    let reader = ConfigReader::new().with_builtin_parsers().unwrap();
     let result = reader.read::<Settings>(fixture("unknown-field.json")).await;
     assert!(matches!(result, Err(Error::Deserialize { .. })));
 }
@@ -121,10 +227,7 @@ async fn provider_serde_rules_reject_unknown_fields() {
 #[cfg(all(feature = "yaml", feature = "toml", feature = "json"))]
 #[tokio::test]
 async fn formats_share_the_same_provider_schema() {
-    let mut reader = ConfigReader::new();
-    reader.register("yaml", congif::parsers::YamlParser).unwrap();
-    reader.register("toml", congif::parsers::TomlParser).unwrap();
-    reader.register("json", congif::parsers::JsonParser).unwrap();
+    let reader = ConfigReader::new().with_builtin_parsers().unwrap();
     for path in ["settings.yaml", "settings.toml", "settings.json"] {
         let settings: Settings = reader.read(fixture(path)).await.unwrap();
         assert_eq!(settings, Settings { cache: 2, http: 2 });
@@ -133,7 +236,7 @@ async fn formats_share_the_same_provider_schema() {
 
 #[cfg(all(feature = "yaml", feature = "toml", feature = "json"))]
 #[tokio::test]
-async fn variables_are_resolved_after_parsing_in_all_formats() {
+async fn source_variables_are_resolved_before_parsing_in_all_formats() {
     #[derive(Debug, Deserialize, PartialEq)]
     struct Paths {
         directory: String,
@@ -141,17 +244,14 @@ async fn variables_are_resolved_after_parsing_in_all_formats() {
         literal: String,
     }
 
-    let mut reader = ConfigReader::new();
-    reader.register("json", congif::parsers::JsonParser).unwrap();
-    reader.register("yaml", congif::parsers::YamlParser).unwrap();
-    reader.register("toml", congif::parsers::TomlParser).unwrap();
+    let reader = ConfigReader::new().with_builtin_parsers().unwrap();
 
     let variables = Variables::from([
         ("APP_ROOT".into(), "/srv/example".into()),
         ("PORT".into(), "8080".into()),
-        ("TEXT".into(), "quote: \"; slash: \\; newline: \n; ${OTHER}".into()),
+        ("TEXT".into(), "literal ${OTHER}".into()),
     ]);
-    // Inserted values are not reparsed or recursively expanded.
+    // Inserted values are parsed but never recursively expanded.
     for path in ["paths.json", "paths.yaml", "paths.toml"] {
         let parsed: Paths = reader
             .read_with_variables(fixture(path), &variables)
@@ -166,11 +266,28 @@ async fn variables_are_resolved_after_parsing_in_all_formats() {
 #[cfg(feature = "json")]
 #[tokio::test]
 async fn json_rejects_unquoted_variable_placeholders() {
-    let mut reader = ConfigReader::new();
-    reader.register("json", congif::parsers::JsonParser).unwrap();
+    let reader = ConfigReader::new().with_builtin_parsers().unwrap();
     let result =
         reader.read::<ConfigValue>(fixture("unquoted-variable.json")).await;
     assert!(matches!(result, Err(Error::Parse { .. })));
+}
+
+#[cfg(feature = "json")]
+#[tokio::test]
+async fn json_accepts_numeric_source_variables_before_parsing() {
+    #[derive(Deserialize)]
+    struct Port {
+        port: u16,
+    }
+    let reader = ConfigReader::new().with_builtin_parsers().unwrap();
+    let parsed: Port = reader
+        .read_with_variables(
+            fixture("unquoted-variable.json"),
+            &Variables::from([("PORT".into(), "8080".into())]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(parsed.port, 8080);
 }
 
 #[cfg(feature = "json")]
@@ -182,8 +299,7 @@ async fn quoted_json_variable_is_not_implicitly_a_number() {
         _port: u16,
     }
 
-    let mut reader = ConfigReader::new();
-    reader.register("json", congif::parsers::JsonParser).unwrap();
+    let reader = ConfigReader::new().with_builtin_parsers().unwrap();
     let result = reader
         .read_with_variables::<Port>(
             fixture("port.json"),
@@ -193,27 +309,34 @@ async fn quoted_json_variable_is_not_implicitly_a_number() {
     assert!(matches!(result, Err(Error::Deserialize { .. })));
 }
 
-struct ValueParser(ConfigValue);
+struct SourceParser;
 
 #[async_trait]
-impl ConfigParser for ValueParser {
+impl ConfigParser for SourceParser {
+    fn extensions(&self) -> &[&str] {
+        &["fixture"]
+    }
+
     async fn parse(
         &self,
-        _: ConfigSource<'_>,
+        source: ConfigSource<'_>,
     ) -> Result<ConfigValue, BoxError> {
-        Ok(self.0.clone())
+        Ok(ConfigValue::String(std::str::from_utf8(source.bytes)?.to_owned()))
     }
 }
 
 async fn resolve_variables(
-    value: ConfigValue,
+    text: &str,
     variables: &Variables,
 ) -> congif::Result<ConfigValue> {
-    let mut reader = ConfigReader::new();
-    reader.register("fixture", ValueParser(value))?;
+    let mut reader = ConfigReader::new().with_builtin_parsers().unwrap();
+    reader.register(SourceParser)?;
     reader
         .parse_with_variables(
-            ConfigSource { path: Path::new("value.fixture"), bytes: b"" },
+            ConfigSource {
+                path: Path::new("value.fixture"),
+                bytes: text.as_bytes(),
+            },
             variables,
         )
         .await
@@ -222,36 +345,25 @@ async fn resolve_variables(
 #[tokio::test]
 async fn variables_reject_missing_and_malformed_expressions() {
     let variables = Variables::new();
-    let missing = ConfigValue::String("${MISSING}".into());
+    let missing = "${MISSING}";
     assert!(
         matches!(resolve_variables(missing, &variables).await, Err(Error::UndefinedVariable(name)) if name == "MISSING")
     );
     for text in ["${}", "${NAME", "${{NAME}"] {
-        let value = ConfigValue::String(text.into());
         assert!(matches!(
-            resolve_variables(value, &variables).await,
+            resolve_variables(text, &variables).await,
             Err(Error::InvalidVariable)
         ));
     }
 }
 
 #[tokio::test]
-async fn variables_visit_nested_values_but_preserve_keys_and_bare_dollars() {
+async fn source_variables_expand_both_forms_once_and_escape_literal_dollars() {
     let variables = Variables::from([("NAME".into(), "example".into())]);
-    let value = ConfigValue::Map(std::collections::BTreeMap::from([(
-        ConfigValue::String("${NAME}".into()),
-        ConfigValue::Seq(vec![ConfigValue::String(
-            "${NAME}/${NAME}/$NAME".into(),
-        )]),
-    )]));
-    let value = resolve_variables(value, &variables).await.unwrap();
-    let ConfigValue::Map(values) = value else { panic!("expected map") };
-    assert_eq!(
-        values[&ConfigValue::String("${NAME}".into())],
-        ConfigValue::Seq(vec![ConfigValue::String(
-            "example/example/$NAME".into()
-        )])
-    );
+    let value = resolve_variables("${NAME}/$NAME/$$NAME/$20", &variables)
+        .await
+        .unwrap();
+    assert_eq!(value, ConfigValue::String("example/example/$NAME/$20".into()));
 }
 
 #[cfg(feature = "ini")]
@@ -267,8 +379,7 @@ async fn ini_sections_and_variables_follow_the_provider_schema() {
         directory: String,
         port: String,
     }
-    let mut reader = ConfigReader::new();
-    reader.register("ini", congif::parsers::IniParser).unwrap();
+    let reader = ConfigReader::new().with_builtin_parsers().unwrap();
     let variables = Variables::from([("ROOT".into(), "/srv/example".into())]);
     let parsed: Config = reader
         .read_with_variables(fixture("settings.ini"), &variables)
@@ -289,8 +400,7 @@ async fn ini_sections_and_variables_follow_the_provider_schema() {
 #[cfg(feature = "ini")]
 #[tokio::test]
 async fn ini_rejects_duplicate_properties_and_malformed_sections() {
-    let mut reader = ConfigReader::new();
-    reader.register("ini", congif::parsers::IniParser).unwrap();
+    let reader = ConfigReader::new().with_builtin_parsers().unwrap();
     for path in ["duplicate.ini", "malformed.ini"] {
         assert!(matches!(
             reader.read::<ConfigValue>(fixture(path)).await,
@@ -314,10 +424,8 @@ async fn xml_elements_attributes_sequences_and_variables_are_typed() {
         #[serde(rename = "$text")]
         address: String,
     }
-    let mut reader = ConfigReader::new();
-    reader.register("xml", congif::parsers::XmlParser).unwrap();
-    let variables =
-        Variables::from([("ROOT".into(), "quote: \" & slash: \\".into())]);
+    let reader = ConfigReader::new().with_builtin_parsers().unwrap();
+    let variables = Variables::from([("ROOT".into(), "/srv/example".into())]);
     let parsed: Config = reader
         .read_with_variables(fixture("settings.xml"), &variables)
         .await
@@ -331,8 +439,7 @@ async fn xml_elements_attributes_sequences_and_variables_are_typed() {
 #[cfg(feature = "xml")]
 #[tokio::test]
 async fn xml_rejects_malformed_documents_dtd_namespaces_and_mixed_content() {
-    let mut reader = ConfigReader::new();
-    reader.register("xml", congif::parsers::XmlParser).unwrap();
+    let reader = ConfigReader::new().with_builtin_parsers().unwrap();
     for path in ["malformed.xml", "dtd.xml", "namespace.xml", "mixed.xml"] {
         assert!(matches!(
             reader.read::<ConfigValue>(fixture(path)).await,

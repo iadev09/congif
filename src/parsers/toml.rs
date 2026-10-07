@@ -4,6 +4,10 @@ pub struct TomlParser;
 
 #[async_trait]
 impl ConfigParser for TomlParser {
+    fn extensions(&self) -> &[&str] {
+        &["toml"]
+    }
+
     async fn parse(
         &self,
         source: ConfigSource<'_>,

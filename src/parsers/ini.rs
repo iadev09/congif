@@ -8,6 +8,10 @@ pub struct IniParser;
 
 #[async_trait]
 impl ConfigParser for IniParser {
+    fn extensions(&self) -> &[&str] {
+        &["ini"]
+    }
+
     async fn parse(
         &self,
         source: ConfigSource<'_>,

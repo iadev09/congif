@@ -4,18 +4,34 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use congif::{
-    ConfigOwner, ConfigReader, Configurable, Error, Result, async_trait,
+    ConfigReader, ConfigRegistration, Configurable, Error, Result, async_trait,
 };
 use serde::Deserialize;
 
-#[derive(Deserialize)]
+struct CountingJson(std::sync::Arc<AtomicU64>);
+
+#[async_trait]
+impl congif::ConfigParser for CountingJson {
+    fn extensions(&self) -> &[&str] {
+        &["json"]
+    }
+
+    async fn parse(
+        &self,
+        source: congif::ConfigSource<'_>,
+    ) -> std::result::Result<congif::ConfigValue, congif::BoxError> {
+        self.0.fetch_add(1, Ordering::Relaxed);
+        congif::ConfigParser::parse(&congif::parsers::JsonParser, source).await
+    }
+}
+
+#[derive(Deserialize, PartialEq)]
 struct Settings {
     value: u64,
 }
 
 struct Owner<const N: u8> {
     path: PathBuf,
-    replacement: Option<PathBuf>,
     reject: AtomicBool,
 }
 
@@ -23,16 +39,18 @@ struct Owner<const N: u8> {
 impl<const N: u8> Configurable for Owner<N> {
     type Config = Settings;
 
+    fn source(&self) -> congif::ConfigFile {
+        congif::ConfigFile {
+            path: self.path.clone(),
+            format: congif::Format::Json,
+        }
+    }
+
     async fn configure(
         &self,
-        reader: &ConfigReader,
-    ) -> Result<Settings> {
-        let candidate = reader.read(&self.path).await?;
-        // Simulate a second edit between two owners preparing the same file.
-        if let Some(replacement) = &self.replacement {
-            std::fs::copy(replacement, &self.path).unwrap();
-        }
-        Ok(candidate)
+        _config: &Settings,
+    ) -> Result<()> {
+        Ok(())
     }
 
     fn validate_config(
@@ -72,11 +90,7 @@ impl Fixture {
         std::fs::copy(source(name), self.path()).unwrap();
     }
     fn owner<const N: u8>(&self) -> Owner<N> {
-        Owner {
-            path: self.path(),
-            replacement: None,
-            reject: AtomicBool::new(false),
-        }
+        Owner { path: self.path(), reject: AtomicBool::new(false) }
     }
 }
 impl Drop for Fixture {
@@ -90,30 +104,40 @@ fn source(name: &str) -> PathBuf {
         .join(name)
 }
 fn reader() -> ConfigReader {
-    let mut reader = ConfigReader::new();
-    reader.register("json", congif::parsers::JsonParser).unwrap();
-    reader
+    ConfigReader::new().with_builtin_parsers().unwrap()
 }
 fn owners<'a>(
     first: &'a Owner<1>,
     second: &'a Owner<2>,
-) -> [&'a dyn ConfigOwner; 2] {
+) -> [&'a dyn ConfigRegistration; 2] {
     [first, second]
 }
 
 #[tokio::test]
 async fn shared_file_is_pinned_for_all_owners_and_refreshes_next_batch() {
     let fixture = Fixture::new();
-    let mut first = fixture.owner::<1>();
-    first.replacement = Some(source("second.json"));
+    let first = fixture.owner::<1>();
     let second = fixture.owner::<2>();
-    let reader = reader();
+    let parses = std::sync::Arc::new(AtomicU64::new(0));
+    let mut reader = ConfigReader::new();
+    reader.register(CountingJson(parses.clone())).unwrap();
     reader.prepare_owners(&owners(&first, &second)).await.unwrap();
     assert_eq!(reader.snapshot::<Owner<1>>().unwrap().value, 1);
     assert_eq!(reader.snapshot::<Owner<2>>().unwrap().value, 1);
+    assert_eq!(
+        parses.load(Ordering::Relaxed),
+        1,
+        "one syntax parse for both owners"
+    );
+    fixture.reset("second.json");
     reader.prepare_owners(&owners(&first, &second)).await.unwrap();
     assert_eq!(reader.snapshot::<Owner<1>>().unwrap().value, 2);
     assert_eq!(reader.snapshot::<Owner<2>>().unwrap().value, 2);
+    assert_eq!(
+        parses.load(Ordering::Relaxed),
+        2,
+        "the next batch parses the new source once"
+    );
 }
 
 #[tokio::test]
