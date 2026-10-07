@@ -139,9 +139,7 @@ impl Configurable for CounterSettings {
 
     fn validate_config(&self, config: &Self::Config) -> Result<()> {
         if config.increment == 0 {
-            return Err(Error::validation(std::io::Error::other(
-                "increment must be greater than zero",
-            )));
+            return Err(Error::invalid("increment must be greater than zero"));
         }
         Ok(())
     }

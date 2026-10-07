@@ -47,9 +47,7 @@ impl<const N: u8> Configurable for Owner<N> {
         config: &Settings,
     ) -> Result<()> {
         if self.reject.load(Ordering::Relaxed) {
-            return Err(congif::Error::validation(std::io::Error::other(
-                "startup rejected",
-            )));
+            return Err(congif::Error::invalid("startup rejected"));
         }
         assert_eq!(
             config.value,
@@ -67,9 +65,7 @@ impl<const N: u8> ConfigObserver for Owner<N> {
         config: &Settings,
     ) -> Result<()> {
         if self.reject.load(Ordering::Relaxed) {
-            return Err(congif::Error::validation(std::io::Error::other(
-                "application rejected",
-            )));
+            return Err(congif::Error::invalid("application rejected"));
         }
         assert_eq!(
             config.value,

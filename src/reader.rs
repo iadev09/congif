@@ -113,9 +113,7 @@ impl ConfigReader {
         self.environment_bindings
             .write()
             .map_err(|_| {
-                Error::validation(std::io::Error::other(
-                    "configuration environment bindings poisoned",
-                ))
+                Error::msg("configuration environment bindings poisoned")
             })?
             .insert(TypeId::of::<C>(), environment);
         Ok(())
@@ -129,9 +127,7 @@ impl ConfigReader {
             .environment_bindings
             .read()
             .map_err(|_| {
-                Error::validation(std::io::Error::other(
-                    "configuration environment bindings poisoned",
-                ))
+                Error::msg("configuration environment bindings poisoned")
             })?
             .get(&owner)
             .cloned())
@@ -220,9 +216,7 @@ impl ConfigReader {
             .environment_bindings
             .read()
             .map_err(|_| {
-                Error::validation(std::io::Error::other(
-                    "configuration environment bindings poisoned",
-                ))
+                Error::msg("configuration environment bindings poisoned")
             })?
             .clone();
         for owner in owners {
@@ -398,9 +392,7 @@ impl ConfigReader {
         // Keep submitted-source parsing on the same environment selected by
         // the successfully prepared owner; failed batches do not rebind it.
         *self.environment_bindings.write().map_err(|_| {
-            Error::validation(std::io::Error::other(
-                "configuration environment bindings poisoned",
-            ))
+            Error::msg("configuration environment bindings poisoned")
         })? = bindings;
         Ok(changed)
     }
@@ -427,14 +419,10 @@ impl ConfigReader {
         owner: &dyn ConfigRegistration,
     ) -> Result<()> {
         if !owner.observes_config() {
-            return Err(Error::validation(std::io::Error::other(
-                "configuration owner has no observer",
-            )));
+            return Err(Error::msg("configuration owner has no observer"));
         }
         let prepared = self.prepared_config(owner).ok_or_else(|| {
-            Error::validation(std::io::Error::other(
-                "configuration owner has not been prepared",
-            ))
+            Error::msg("configuration owner has not been prepared")
         })?;
         owner.config_changed(prepared.value.as_ref()).await?;
         self.confirm_applied(prepared).await
@@ -446,11 +434,9 @@ impl ConfigReader {
         &self,
         registration: &dyn ConfigRegistration,
     ) -> Result<()> {
-        let prepared = self.prepared_config(registration).ok_or_else(|| {
-            Error::validation(std::io::Error::other(
-                "configuration has not been prepared",
-            ))
-        })?;
+        let prepared = self
+            .prepared_config(registration)
+            .ok_or_else(|| Error::msg("configuration has not been prepared"))?;
         registration.configure(prepared.value.as_ref()).await?;
         self.confirm_applied(prepared).await
     }

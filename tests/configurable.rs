@@ -63,9 +63,9 @@ impl Configurable for CacheConfiguration {
         config: &Self::Config,
     ) -> Result<()> {
         if !config.stores.contains_key(&config.default) {
-            return Err(Error::validation(std::io::Error::other(
+            return Err(Error::invalid(
                 "default cache store is not configured",
-            )));
+            ));
         }
         Ok(())
     }

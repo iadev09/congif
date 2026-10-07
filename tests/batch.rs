@@ -58,7 +58,7 @@ impl<const N: u8> Configurable for Owner<N> {
         _: &Settings,
     ) -> Result<()> {
         if self.reject.load(Ordering::Relaxed) {
-            Err(Error::validation(std::io::Error::other("rejected candidate")))
+            Err(Error::invalid("rejected candidate"))
         } else {
             Ok(())
         }

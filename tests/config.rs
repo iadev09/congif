@@ -195,9 +195,7 @@ fn provider_validation_failure_keeps_the_active_snapshot() {
     let store = ConfigStore::new(Settings { cache: 1, http: 1 });
     let rejected = store.replace(Settings { cache: 0, http: 2 }, |candidate| {
         if candidate.cache == 0 {
-            Err(Error::validation(std::io::Error::other(
-                "cache must be positive",
-            )))
+            Err(Error::invalid("cache must be positive"))
         } else {
             Ok(())
         }

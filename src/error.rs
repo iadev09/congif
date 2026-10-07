@@ -53,15 +53,44 @@ pub enum Error {
     InvalidVariable,
     #[error("config validation failed: {0}")]
     Validation(#[source] BoxError),
+    #[error("{0}")]
+    Message(String),
     #[cfg(feature = "watch")]
     #[error("config watch failed: {0}")]
     Watch(#[source] BoxError),
 }
 
 impl Error {
+    /// A validation failure carrying an error value of its own.
     pub fn validation(
         error: impl std::error::Error + Send + Sync + 'static
     ) -> Self {
         Self::Validation(Box::new(error))
     }
+
+    /// A validation failure that is only a sentence: "default store is not
+    /// configured". Reads as a validation error wherever errors are matched.
+    pub fn invalid(message: impl std::fmt::Display) -> Self {
+        Self::Validation(Box::new(Message(message.to_string())))
+    }
+
+    /// A failure outside reading and validation — an apply step that refused,
+    /// a poisoned lock, an owner that was never prepared.
+    pub fn msg(message: impl std::fmt::Display) -> Self {
+        Self::Message(message.to_string())
+    }
 }
+
+#[derive(Debug)]
+struct Message(String);
+
+impl std::fmt::Display for Message {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Message {}
