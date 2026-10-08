@@ -8,6 +8,19 @@ pub struct IniParser;
 
 #[async_trait]
 impl ConfigParser for IniParser {
+    /// A `${NAME}` inside a comment is documentation, not a variable.
+    fn expand_variables(
+        &self,
+        text: &str,
+        variables: &crate::Variables,
+    ) -> crate::Result<String> {
+        crate::variables::expand_outside_comments(
+            text,
+            variables,
+            crate::variables::Comments::HashOrSemicolon,
+        )
+    }
+
     fn extensions(&self) -> &[&str] {
         &["ini"]
     }

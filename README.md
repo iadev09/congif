@@ -130,6 +130,11 @@ text, as a redirect target or a price is written. `$$` inserts a literal
 dollar where `${` would otherwise open an expression. Undefined variables
 and malformed `${...}` expressions are errors.
 
+Comments are left as they are, so a `${NAME}` written in one documents the
+file rather than naming a variable: `#` to the end of the line in YAML and
+TOML (at a line's start or after whitespace, outside quotes), `;` or `#` in
+INI, `<!-- -->` in XML. JSON has no comments.
+
 The JSON adapter tracks quoted strings and escapes inserted string content.
 Unquoted placeholders must contain a JSON number, boolean or `null`; they cannot
 insert strings, objects, arrays or additional fields. The caller's schema still

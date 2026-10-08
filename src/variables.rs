@@ -13,7 +13,32 @@ pub(crate) fn expand(
     text: &str,
     variables: &Variables,
 ) -> Result<String> {
-    expand_with(text, variables, |_, value, _| Ok(value.to_owned()))
+    expand_with(text, variables, Comments::None, |_, value, _| {
+        Ok(value.to_owned())
+    })
+}
+
+/// A format's comment syntax. Text inside a comment is copied as it is: a
+/// `${NAME}` written there is documentation, not a variable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Comments {
+    /// The format has no comments (JSON).
+    None,
+    /// `#` to end of line, at line start or after whitespace (YAML, TOML).
+    Hash,
+    /// `;` or `#` to end of line (INI).
+    HashOrSemicolon,
+    /// `<!-- ... -->` (XML).
+    Xml,
+}
+
+/// Expand everything outside the format's comments.
+pub(crate) fn expand_outside_comments(
+    text: &str,
+    variables: &Variables,
+    comments: Comments,
+) -> Result<String> {
+    expand_with(text, variables, comments, |_, value, _| Ok(value.to_owned()))
 }
 
 #[cfg(feature = "json")]
@@ -21,7 +46,7 @@ pub(crate) fn expand_json(
     text: &str,
     variables: &Variables,
 ) -> Result<String> {
-    expand_with(text, variables, |name, value, quoted| {
+    expand_with(text, variables, Comments::None, |name, value, quoted| {
         if quoted {
             let encoded = serde_json::to_string(value)
                 .expect("string serialization is infallible");
@@ -41,13 +66,28 @@ pub(crate) fn expand_json(
 fn expand_with(
     text: &str,
     variables: &Variables,
+    comments: Comments,
     mut render: impl FnMut(&str, &str, bool) -> Result<String>,
 ) -> Result<String> {
     let mut output = String::new();
     let mut remaining = text;
     let mut quoted = false;
+    let mut single_quoted = false;
     let mut escaped = false;
+    // Whether a line comment may start here: at the text's start, a line's
+    // start, or after whitespace.
+    let mut at_boundary = true;
     while let Some(ch) = remaining.chars().next() {
+        if !quoted
+            && !single_quoted
+            && let Some(rest) = comment_span(remaining, comments, at_boundary)
+        {
+            let span = &remaining[..remaining.len() - rest.len()];
+            output.push_str(span);
+            remaining = rest;
+            at_boundary = true;
+            continue;
+        }
         if ch != '$' {
             output.push(ch);
             remaining = &remaining[ch.len_utf8()..];
@@ -55,11 +95,15 @@ fn expand_with(
                 escaped = false;
             } else if quoted && ch == '\\' {
                 escaped = true;
-            } else if ch == '"' {
+            } else if ch == '"' && !single_quoted {
                 quoted = !quoted;
+            } else if ch == '\'' && !quoted && comments != Comments::None {
+                single_quoted = !single_quoted;
             }
+            at_boundary = ch.is_whitespace();
             continue;
         }
+        at_boundary = false;
         if remaining.starts_with("$$") {
             output.push('$');
             remaining = &remaining[2..];
@@ -89,6 +133,29 @@ fn expand_with(
         remaining = &remaining[consumed..];
     }
     Ok(output)
+}
+
+/// The comment that starts at `text`, returned as the text after it; `None`
+/// when no comment starts here.
+fn comment_span(
+    text: &str,
+    comments: Comments,
+    at_boundary: bool,
+) -> Option<&str> {
+    let line_comment = |markers: &[char]| {
+        let ch = text.chars().next()?;
+        (at_boundary && markers.contains(&ch))
+            .then(|| text.find('\n').map_or("", |end| &text[end..]))
+    };
+    match comments {
+        Comments::None => None,
+        Comments::Hash => line_comment(&['#']),
+        Comments::HashOrSemicolon => line_comment(&['#', ';']),
+        Comments::Xml => {
+            let rest = text.strip_prefix("<!--")?;
+            Some(rest.find("-->").map_or("", |end| &rest[end + 3..]))
+        }
+    }
 }
 
 fn valid_name(name: &str) -> bool {

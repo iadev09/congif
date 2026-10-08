@@ -355,6 +355,79 @@ async fn variables_reject_missing_and_malformed_expressions() {
     }
 }
 
+async fn parse_text(
+    file: &str,
+    text: &str,
+    variables: &Variables,
+) -> congif::Result<ConfigValue> {
+    ConfigReader::new()
+        .with_builtin_parsers()
+        .unwrap()
+        .parse_with_variables(
+            ConfigSource { path: Path::new(file), bytes: text.as_bytes() },
+            variables,
+        )
+        .await
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+struct CommentDoc {
+    name: String,
+    #[serde(default)]
+    hash: Option<String>,
+    #[serde(default)]
+    lit: Option<String>,
+}
+
+fn comment_doc(value: ConfigValue) -> CommentDoc {
+    value.deserialize_into().unwrap()
+}
+
+/// A placeholder written in a comment documents the file; it is not a
+/// variable the environment must define.
+#[tokio::test]
+async fn comments_are_not_expanded_in_any_format() {
+    let variables = Variables::from([("NAME".into(), "example".into())]);
+    let yaml = "# `${MISSING}` expands from the environment\nname: ${NAME} # trailing ${MISSING}\nhash: \"a#${NAME}\"\nlit: 'x#${NAME}'\n";
+    let doc =
+        comment_doc(parse_text("doc.yaml", yaml, &variables).await.unwrap());
+    assert_eq!(doc.name, "example");
+    assert_eq!(doc.hash.as_deref(), Some("a#example"));
+    assert_eq!(doc.lit.as_deref(), Some("x#example"));
+
+    let toml = "# ${MISSING}\nname = \"${NAME}\" # ${MISSING}\n";
+    let doc =
+        comment_doc(parse_text("doc.toml", toml, &variables).await.unwrap());
+    assert_eq!(doc.name, "example");
+
+    #[cfg(feature = "ini")]
+    {
+        #[derive(Deserialize)]
+        struct IniDoc {
+            section: CommentDoc,
+        }
+        let ini = "; ${MISSING}\n# ${MISSING}\n[section]\nname = ${NAME}\n";
+        let value = parse_text("doc.ini", ini, &variables).await.unwrap();
+        let doc: IniDoc = value.deserialize_into().unwrap();
+        assert_eq!(doc.section.name, "example");
+    }
+
+    #[cfg(feature = "xml")]
+    {
+        let xml = "<!-- ${MISSING} --><root><name>${NAME}</name><!--\n ${MISSING}\n--></root>";
+        let doc =
+            comment_doc(parse_text("doc.xml", xml, &variables).await.unwrap());
+        assert_eq!(doc.name, "example");
+    }
+
+    // JSON has no comments: a placeholder is always a variable.
+    let json = "{\"name\": \"${MISSING}\"}";
+    assert!(matches!(
+        parse_text("doc.json", json, &Variables::new()).await,
+        Err(Error::UndefinedVariable(name)) if name == "MISSING"
+    ));
+}
+
 #[tokio::test]
 async fn only_braced_names_are_variables_and_bare_dollars_stay_text() {
     let variables = Variables::from([("NAME".into(), "example".into())]);
