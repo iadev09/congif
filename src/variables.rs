@@ -21,6 +21,7 @@ pub(crate) fn expand(
 /// A format's comment syntax. Text inside a comment is copied as it is: a
 /// `${NAME}` written there is documentation, not a variable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 pub(crate) enum Comments {
     /// The format has no comments (JSON).
     None,
@@ -33,6 +34,10 @@ pub(crate) enum Comments {
 }
 
 /// Expand everything outside the format's comments.
+///
+/// Which adapters exist is a feature choice, so with few formats enabled
+/// parts of this stay unused.
+#[allow(dead_code)]
 pub(crate) fn expand_outside_comments(
     text: &str,
     variables: &Variables,
