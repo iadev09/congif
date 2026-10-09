@@ -38,13 +38,15 @@ application/runtime decides whether to execute a reload regardless of equality.
 1. Configurable components declare one `ConfigFile` with an explicit `Format`.
    The reader resolves that registered parser before opening the source. Direct
    `read(path)` calls still select by extension. Paths have no implicit base directory.
-2. The reader expands `${NAME}` in UTF-8 source text (a bare `$name` is text) using the supplied
+2. The reader expands `${NAME}` in UTF-8 source text using the supplied
    variables or environment snapshot, without reading process environment.
    Expansion is single-pass and parser-owned: JSON escapes quoted insertions
-   and restricts unquoted insertions to numbers, booleans and null; other
-   adapters default to literal substitution. The parser then reads syntax or
-   executes its own adapter behavior. Provider Serde rules decode the resulting
-   value into the candidate config.
+   and restricts unquoted insertions to numbers, booleans and null. Only JSON
+   also accepts bare `$NAME` for complete unquoted value tokens, avoiding
+   `${NAME}`'s structural-brace ambiguity in JSON tooling. Bare dollar patterns
+   inside strings and in every other adapter remain literal. The parser then
+   reads syntax or executes its own adapter behavior. Provider Serde rules
+   decode the resulting value into the candidate config.
 3. The application assembles the complete candidate and prepares any required
    provider-owned derived data. The store's `replace` accepts a caller-supplied
    validation function; it validates before changing the active snapshot.
@@ -58,7 +60,8 @@ other refusal — an apply step, a poisoned lock, an owner never prepared — an
 is never dressed as validation.
 Preparation batches collect affected owners' declared sources before their
 `configure` calls. File bytes are pinned once. Format-neutral syntax trees are
-shared within that batch by source path, parser identity and expanded content; each owner still
+shared within that batch by source path, parser identity, expanded content and
+the pinned variable values (including absence); each owner still
 deserializes its own schema and validates its own domain. Bound environments
 allow syntax preparation before configure. Direct reader calls can supply
 explicit variables; declared component sources use their registered environment.
@@ -92,6 +95,12 @@ Each built-in adapter lives in its own `src/parsers/` module. The always-present
 custom adapters do not require any built-in format feature.
 The core has no PHP or Laravel dependency. Claviron can implement
 `ConfigParser` and supply its PHP execution and Laravel bootstrap context.
+`parse_with_variables` delivers the reader's pinned environment separately from
+the source. Its default delegates to `parse`, preserving existing adapters.
+An executable adapter can keep its text intact in `expand_variables` and expose
+variables through language APIs instead of injecting values into executable code.
+Two identical source texts with different variable values never share that
+adapter's result within a batch; equal variable maps do share it.
 
 Tests exercise parsing, schema rejection, registration and snapshot behavior.
 They do not boot providers, servers or applications, and use no sleeps.

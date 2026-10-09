@@ -12,7 +12,8 @@ use crate::{
 };
 
 type SourceBytes = Arc<tokio::sync::Mutex<HashMap<PathBuf, Arc<[u8]>>>>;
-type ParsedKey = (PathBuf, usize, Arc<[u8]>, bool);
+type ParsedKey =
+    (PathBuf, usize, Arc<[u8]>, Option<Vec<(String, String)>>, bool);
 type ParsedSources = Arc<tokio::sync::Mutex<HashMap<ParsedKey, ParsedSource>>>;
 
 #[derive(Clone)]
@@ -834,7 +835,8 @@ impl ConfigReader {
         .await
     }
 
-    /// Expand `$NAME` and `${NAME}` in source text, then parse and apply the schema.
+    /// Expand `${NAME}` in source text, then parse and apply the schema.
+    /// Only JSON also accepts `$NAME` as a complete unquoted scalar value.
     /// The adapter controls escaping; no environment lookup or recursive expansion.
     pub async fn parse_with_variables<T: DeserializeOwned>(
         &self,
@@ -1075,13 +1077,22 @@ impl ConfigReader {
             None => None,
         };
         // Aliases of the same registered adapter can share syntax; different
-        // adapters for one file must never share it. Expanded bytes separate
-        // different environment/explicit-variable contexts within the batch.
+        // adapters for one file must never share it. Executable adapters may
+        // leave source unchanged, so include pinned variable contents as well.
         let parser_id = parser as *const dyn ConfigParser as *const () as usize;
+        let variable_key = variables.map(|variables| {
+            let mut values: Vec<_> = variables
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            values.sort();
+            values
+        });
         let key = (
             source.path.to_owned(),
             parser_id,
             Arc::<[u8]>::from(source.bytes),
+            variable_key,
             track_sources,
         );
         if let Some(value) = parsed.as_ref().and_then(|cache| cache.get(&key)) {
@@ -1091,9 +1102,13 @@ impl ConfigReader {
             tracing::trace!(path = %source.path.display(), "configuration syntax reused within preparation batch");
             return Ok(value.clone());
         }
-        let mut value = parser.parse(source).await.map_err(|error| {
-            Error::Parse { path: source.path.to_owned(), source: error }
-        })?;
+        let mut value = parser
+            .parse_with_variables(source, variables)
+            .await
+            .map_err(|error| Error::Parse {
+                path: source.path.to_owned(),
+                source: error,
+            })?;
         let includes = parser.includes(&mut value).map_err(|error| {
             Error::Parse { path: source.path.to_owned(), source: error }
         })?;

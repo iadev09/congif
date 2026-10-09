@@ -13,7 +13,7 @@ pub(crate) fn expand(
     text: &str,
     variables: &Variables,
 ) -> Result<String> {
-    expand_with(text, variables, Comments::None, |_, value, _| {
+    expand_with(text, variables, Comments::None, false, |_, value, _| {
         Ok(value.to_owned())
     })
 }
@@ -43,7 +43,9 @@ pub(crate) fn expand_outside_comments(
     variables: &Variables,
     comments: Comments,
 ) -> Result<String> {
-    expand_with(text, variables, comments, |_, value, _| Ok(value.to_owned()))
+    expand_with(text, variables, comments, false, |_, value, _| {
+        Ok(value.to_owned())
+    })
 }
 
 #[cfg(feature = "json")]
@@ -51,7 +53,7 @@ pub(crate) fn expand_json(
     text: &str,
     variables: &Variables,
 ) -> Result<String> {
-    expand_with(text, variables, Comments::None, |name, value, quoted| {
+    expand_with(text, variables, Comments::None, true, |name, value, quoted| {
         if quoted {
             let encoded = serde_json::to_string(value)
                 .expect("string serialization is infallible");
@@ -72,6 +74,7 @@ fn expand_with(
     text: &str,
     variables: &Variables,
     comments: Comments,
+    bare_json_scalars: bool,
     mut render: impl FnMut(&str, &str, bool) -> Result<String>,
 ) -> Result<String> {
     let mut output = String::new();
@@ -115,19 +118,26 @@ fn expand_with(
             escaped = false;
             continue;
         }
-        let Some(expression) = remaining.strip_prefix("${") else {
-            // A bare `$` is text: `$uri` in a redirect, `$20` in a price.
-            output.push('$');
-            remaining = &remaining[1..];
-            escaped = false;
-            continue;
-        };
-        let end = expression.find('}').ok_or(Error::InvalidVariable)?;
-        let name = &expression[..end];
-        if !valid_name(name) {
-            return Err(Error::InvalidVariable);
-        }
-        let consumed = end + 3;
+        let (name, consumed) =
+            if let Some(expression) = remaining.strip_prefix("${") {
+                let end = expression.find('}').ok_or(Error::InvalidVariable)?;
+                let name = &expression[..end];
+                if !valid_name(name) {
+                    return Err(Error::InvalidVariable);
+                }
+                (name, end + 3)
+            } else if bare_json_scalars
+                && !quoted
+                && let Some(variable) = bare_json_variable(remaining, &output)
+            {
+                variable
+            } else {
+                // A bare `$` is text: `$uri` in a redirect, `$20` in a price.
+                output.push('$');
+                remaining = &remaining[1..];
+                escaped = false;
+                continue;
+            };
         if escaped {
             return Err(Error::InvalidVariable);
         }
@@ -138,6 +148,35 @@ fn expand_with(
         remaining = &remaining[consumed..];
     }
     Ok(output)
+}
+
+/// Only a complete, unquoted JSON value token may use the bare spelling.
+/// Do not turn invalid JSON such as `2$NUMBER` or `$NUMBER.5` into a number.
+fn bare_json_variable<'a>(
+    text: &'a str,
+    output: &str,
+) -> Option<(&'a str, usize)> {
+    let previous = output.chars().rev().find(|ch| !ch.is_whitespace());
+    if !matches!(previous, None | Some(':' | '[' | ',')) {
+        return None;
+    }
+    let name = &text[1..];
+    let length = name
+        .bytes()
+        .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == b'_')
+        .count();
+    if !valid_name(&name[..length]) {
+        return None;
+    }
+    let tail = &name[length..];
+    if tail
+        .chars()
+        .next()
+        .is_some_and(|ch| !ch.is_whitespace() && !matches!(ch, ',' | ']' | '}'))
+    {
+        return None;
+    }
+    Some((&name[..length], length + 1))
 }
 
 /// The comment that starts at `text`, returned as the text after it; `None`

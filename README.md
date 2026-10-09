@@ -125,7 +125,7 @@ dotenv files itself.
 
 Expansion is single-pass: inserted values are never recursively expanded.
 Names use ASCII letters, digits and underscores, starting with a letter or
-underscore. Only the braced form is a variable: a bare `$uri` or `$20` is
+underscore. The braced form is a variable: a bare `$uri` or `$20` is
 text, as a redirect target or a price is written. `$$` inserts a literal
 dollar where `${` would otherwise open an expression. Undefined variables
 and malformed `${...}` expressions are errors.
@@ -135,6 +135,17 @@ file rather than naming a variable: `#` to the end of the line in YAML and
 TOML (at a line's start or after whitespace, outside quotes), `;` or `#` in
 INI, `<!-- -->` in XML. JSON has no comments.
 
+Only JSON additionally accepts `$NAME` as a complete unquoted value token.
+Inside strings, bare dollar expressions remain literal; YAML and other formats
+keep them literal everywhere, including redirect and script patterns.
+These files are templates, not standard JSON until expansion completes.
+
+Use the bare spelling for unquoted JSON values: `{` and `}` are JSON's
+structural delimiters, so `${NAME}` there can cause cascading syntax errors
+in editors and linters. `$NAME` avoids the extra brace ambiguity, but remains
+template syntax, not valid standard JSON. The braced spelling is still supported
+for compatibility and remains the syntax for substitutions inside strings.
+
 The JSON adapter tracks quoted strings and escapes inserted string content.
 Unquoted placeholders must contain a JSON number, boolean or `null`; they cannot
 insert strings, objects, arrays or additional fields. The caller's schema still
@@ -143,7 +154,7 @@ supply values appropriate to their format, or override `expand_variables` in a
 custom parser. Quote strings and leave numeric or boolean placeholders unquoted:
 
 ~~~json
-{"listen": "$HTTP_LISTEN", "max_connections": $HTTP_MAX_CONNECTIONS}
+{"listen": "${HTTP_LISTEN}", "max_connections": $HTTP_MAX_CONNECTIONS}
 ~~~
 
 ## Configure an application component

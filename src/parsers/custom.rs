@@ -42,4 +42,16 @@ pub trait ConfigParser: Send + Sync {
         &self,
         source: ConfigSource<'_>,
     ) -> Result<ConfigValue, BoxError>;
+
+    /// Evaluate against the same caller-owned variables used for source
+    /// preparation. Executable adapters may leave source text unchanged and
+    /// expose these values through their language's environment API instead.
+    /// Never read process environment as a substitute for this pinned input.
+    async fn parse_with_variables(
+        &self,
+        source: ConfigSource<'_>,
+        _variables: Option<&crate::Variables>,
+    ) -> Result<ConfigValue, BoxError> {
+        self.parse(source).await
+    }
 }
