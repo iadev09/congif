@@ -320,7 +320,7 @@ async fn include_notification_prepares_shared_source_once() {
     let first = fixture.owner::<1>();
     let second = fixture.owner::<2>();
     let parses = Arc::new(AtomicU64::new(0));
-    let mut reader = ConfigReader::new();
+    let reader = ConfigReader::new();
     reader.register(CountingYaml(parses.clone())).unwrap();
     reader.initialize_owners(&[&first, &second]).await.unwrap();
     let changed = std::fs::canonicalize(&fixture.0).unwrap().join("first.yaml");

@@ -68,10 +68,14 @@ pub trait Configurable: Send + Sync {
 
     /// Apply the prepared startup config. Reading and validation have finished;
     /// this hook may initialize runtime resources without parsing again.
+    /// A declaration consumed by a later boot constructor needs no application
+    /// hook: its validated snapshot remains available in the reader.
     async fn configure(
         &self,
-        config: &Self::Config,
-    ) -> Result<()>;
+        _config: &Self::Config,
+    ) -> Result<()> {
+        Ok(())
+    }
 
     /// Opt in to dot-path access for hosted applications and language bridges.
     /// Export only fields intended for those consumers. Called during

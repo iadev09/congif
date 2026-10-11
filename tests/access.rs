@@ -83,7 +83,7 @@ impl<const N: u8> Configurable for Exposed<N> {
 
 #[tokio::test]
 async fn prepared_and_applied_generations_only_converge_after_confirmation() {
-    let mut reader = ConfigReader::new();
+    let reader = ConfigReader::new();
     let owner = Exposed::<0>(Arc::new(AtomicU64::new(1)));
     reader
         .register(AtomicParser { key: ["v0"], value: owner.0.clone() })
@@ -132,7 +132,7 @@ async fn prepared_and_applied_generations_only_converge_after_confirmation() {
 
 #[tokio::test]
 async fn dot_lookup_distinguishes_missing_values_and_conversion_errors() {
-    let mut reader = ConfigReader::new();
+    let reader = ConfigReader::new();
     let owner = Exposed::<0>(Arc::new(AtomicU64::new(3)));
     reader
         .register(AtomicParser { key: ["v0"], value: owner.0.clone() })
@@ -168,7 +168,7 @@ async fn dot_lookup_distinguishes_missing_values_and_conversion_errors() {
 
 #[tokio::test]
 async fn namespace_conflict_keeps_the_previous_catalog() {
-    let mut reader = ConfigReader::new();
+    let reader = ConfigReader::new();
     let first = Exposed::<0>(Arc::new(AtomicU64::new(1)));
     reader
         .register(AtomicParser { key: ["v0"], value: first.0.clone() })
@@ -211,7 +211,7 @@ impl<const N: u8> Configurable for Owner<N> {
 
 #[tokio::test]
 async fn access_shares_the_prepared_snapshot_and_pins_its_generation() {
-    let mut reader = ConfigReader::new();
+    let reader = ConfigReader::new();
     let owner = Owner::<0> {
         value: Arc::new(AtomicU64::new(1)),
         preparations: AtomicU64::new(0),

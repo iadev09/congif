@@ -119,7 +119,7 @@ async fn shared_file_is_pinned_for_all_owners_and_refreshes_next_batch() {
     let first = fixture.owner::<1>();
     let second = fixture.owner::<2>();
     let parses = std::sync::Arc::new(AtomicU64::new(0));
-    let mut reader = ConfigReader::new();
+    let reader = ConfigReader::new();
     reader.register(CountingJson(parses.clone())).unwrap();
     reader.prepare_owners(&owners(&first, &second)).await.unwrap();
     assert_eq!(reader.snapshot::<Owner<1>>().unwrap().value, 1);

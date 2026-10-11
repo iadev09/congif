@@ -90,6 +90,10 @@ be registered by parser value.
 Parsers declare their own supported extensions.
 Duplicate normalized extensions are rejected, not overwritten, and a failed
 registration publishes none of the new parser's mappings.
+Registration accepts a shared reader reference, so hosts can add adapters during
+composition after placing the reader in application state. A short write lock
+protects catalog updates; reads retain an Arc to the adapter and never hold that
+lock across execution. Each preparation batch pins its complete parser catalog.
 Each built-in adapter lives in its own `src/parsers/` module. The always-present
 `parsers::ConfigParser` contract and `ConfigSource` live in `parsers/custom.rs`;
 custom adapters do not require any built-in format feature.

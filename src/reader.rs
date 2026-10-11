@@ -62,7 +62,7 @@ enum EnvironmentRefresh<'a> {
 /// preparation pins file bytes and publishes one atomic owner-keyed catalog.
 pub struct ConfigReader {
     identity: Arc<()>,
-    parsers: HashMap<String, Arc<dyn ConfigParser>>,
+    parsers: RwLock<HashMap<String, Arc<dyn ConfigParser>>>,
     configs: ConfigStore<HashMap<TypeId, ConfigEntry>>,
     preparation: tokio::sync::Mutex<()>,
     sources: Option<SourceBytes>,
@@ -85,7 +85,7 @@ impl Default for ConfigReader {
     fn default() -> Self {
         Self {
             identity: Arc::new(()),
-            parsers: HashMap::new(),
+            parsers: RwLock::new(HashMap::new()),
             configs: ConfigStore::new(HashMap::new()),
             preparation: tokio::sync::Mutex::new(()),
             sources: None,
@@ -190,14 +190,19 @@ impl ConfigReader {
 
     /// Add all built-in parsers enabled by Cargo features.
     /// Existing custom mappings are never silently overwritten.
-    pub fn with_builtin_parsers(mut self) -> Result<Self> {
+    pub fn with_builtin_parsers(self) -> Result<Self> {
         let builtins = crate::parsers::builtin_parsers();
+        let mut parsers = self
+            .parsers
+            .write()
+            .map_err(|_| Error::msg("configuration parsers poisoned"))?;
         for extension in builtins.keys() {
-            if self.parsers.contains_key(extension) {
+            if parsers.contains_key(extension) {
                 return Err(Error::DuplicateParser(extension.clone()));
             }
         }
-        self.parsers.extend(builtins);
+        parsers.extend(builtins);
+        drop(parsers);
         Ok(self)
     }
 
@@ -293,7 +298,12 @@ impl ConfigReader {
         }
         let reader = Self {
             identity: self.identity.clone(),
-            parsers: self.parsers.clone(),
+            parsers: RwLock::new(
+                self.parsers
+                    .read()
+                    .map_err(|_| Error::msg("configuration parsers poisoned"))?
+                    .clone(),
+            ),
             sources: Some(Arc::new(tokio::sync::Mutex::new(HashMap::new()))),
             parsed_sources: Some(Arc::new(tokio::sync::Mutex::new(
                 HashMap::new(),
@@ -391,7 +401,7 @@ impl ConfigReader {
             };
             reader
                 .syntax(
-                    parser,
+                    parser.as_ref(),
                     ConfigSource { path: &file.path, bytes: &bytes },
                     variables.as_deref(),
                     true,
@@ -650,7 +660,12 @@ impl ConfigReader {
         };
         Ok(Some(Self {
             identity: self.identity.clone(),
-            parsers: self.parsers.clone(),
+            parsers: RwLock::new(
+                self.parsers
+                    .read()
+                    .map_err(|_| Error::msg("configuration parsers poisoned"))?
+                    .clone(),
+            ),
             sources: self.sources.clone(),
             parsed_sources: self.parsed_sources.clone(),
             includes: self.includes.clone(),
@@ -717,15 +732,21 @@ impl ConfigReader {
 
     /// Register a parser under all of its declared extensions.
     /// Failed validation or a conflict leaves the registry unchanged.
+    /// Shared hosts register during composition; each preparation batch pins
+    /// its parser catalog. No registry lock is held while a parser executes.
     pub fn register<P: ConfigParser + 'static>(
-        &mut self,
+        &self,
         parser: P,
-    ) -> Result<&mut Self> {
+    ) -> Result<&Self> {
         let declared = parser.extensions();
         if declared.is_empty() {
             return Err(Error::MissingExtensions);
         }
         let mut extensions = Vec::with_capacity(declared.len());
+        let mut parsers = self
+            .parsers
+            .write()
+            .map_err(|_| Error::msg("configuration parsers poisoned"))?;
         for extension in declared {
             if extension.is_empty()
                 || !extension.bytes().all(|byte| byte.is_ascii_alphanumeric())
@@ -733,7 +754,7 @@ impl ConfigReader {
                 return Err(Error::InvalidExtension((*extension).to_owned()));
             }
             let extension = extension.to_ascii_lowercase();
-            if self.parsers.contains_key(&extension) {
+            if parsers.contains_key(&extension) {
                 return Err(Error::DuplicateParser(extension));
             }
             if !extensions.contains(&extension) {
@@ -742,7 +763,7 @@ impl ConfigReader {
         }
         let parser: Arc<dyn ConfigParser> = Arc::new(parser);
         for extension in extensions {
-            self.parsers.insert(extension, parser.clone());
+            parsers.insert(extension, parser.clone());
         }
         Ok(self)
     }
@@ -750,13 +771,15 @@ impl ConfigReader {
     fn parser(
         &self,
         path: &Path,
-    ) -> Result<&dyn ConfigParser> {
+    ) -> Result<Arc<dyn ConfigParser>> {
+        let parsers = self
+            .parsers
+            .read()
+            .map_err(|_| Error::msg("configuration parsers poisoned"))?;
         path.extension()
             .and_then(|extension| extension.to_str())
-            .and_then(|extension| {
-                self.parsers.get(&extension.to_ascii_lowercase())
-            })
-            .map(Arc::as_ref)
+            .and_then(|extension| parsers.get(&extension.to_ascii_lowercase()))
+            .cloned()
             .ok_or_else(|| Error::UnsupportedFormat { path: path.to_owned() })
     }
 
@@ -764,10 +787,12 @@ impl ConfigReader {
         &self,
         format: &crate::Format,
         path: &Path,
-    ) -> Result<&dyn ConfigParser> {
+    ) -> Result<Arc<dyn ConfigParser>> {
         self.parsers
+            .read()
+            .map_err(|_| Error::msg("configuration parsers poisoned"))?
             .get(&format.key().to_ascii_lowercase())
-            .map(Arc::as_ref)
+            .cloned()
             .ok_or_else(|| Error::UnsupportedFormat { path: path.to_owned() })
     }
 
@@ -878,13 +903,14 @@ impl ConfigReader {
 
     async fn decode<T: DeserializeOwned>(
         &self,
-        parser: &dyn ConfigParser,
+        parser: Arc<dyn ConfigParser>,
         source: ConfigSource<'_>,
         variables: Option<&Variables>,
         track_sources: bool,
     ) -> Result<T> {
-        let parsed =
-            self.syntax(parser, source, variables, track_sources).await?;
+        let parsed = self
+            .syntax(parser.as_ref(), source, variables, track_sources)
+            .await?;
         let result = T::deserialize(parsed.value).map_err(|error| {
             Error::Deserialize { path: source.path.to_owned(), source: error }
         })?;

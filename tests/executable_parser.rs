@@ -73,7 +73,7 @@ impl<const N: u8> Configurable for Owner<N> {
 
 #[tokio::test]
 async fn executable_parser_receives_variables_without_rewriting_source() {
-    let mut reader = ConfigReader::new();
+    let reader = Arc::new(ConfigReader::new());
     reader.register(ExecutableParser(Arc::new(AtomicU64::new(0)))).unwrap();
     let variables = Variables::from([("VALUE".into(), "first".into())]);
     let settings: Settings = reader
@@ -109,7 +109,7 @@ async fn executable_parser_batch_separates_environments_and_reuses_equal_values(
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/executable.config");
     let parses = Arc::new(AtomicU64::new(0));
-    let mut reader = ConfigReader::new();
+    let reader = ConfigReader::new();
     reader.register(ExecutableParser(parses.clone())).unwrap();
     bind::<1>(&reader, "first");
     bind::<2>(&reader, "second");

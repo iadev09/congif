@@ -44,7 +44,7 @@ impl ConfigParser for FixtureParser {
 
 #[tokio::test]
 async fn external_parser_produces_owned_typed_config() {
-    let mut reader = ConfigReader::new().with_builtin_parsers().unwrap();
+    let reader = ConfigReader::new().with_builtin_parsers().unwrap();
     reader.register(FixtureParser).unwrap();
     let settings: Settings = reader
         .parse(ConfigSource { path: Path::new("settings.FIXTURE"), bytes: b"" })
@@ -55,7 +55,7 @@ async fn external_parser_produces_owned_typed_config() {
 
 #[test]
 fn duplicate_parser_does_not_replace_the_registered_adapter() {
-    let mut reader = ConfigReader::new().with_builtin_parsers().unwrap();
+    let reader = ConfigReader::new().with_builtin_parsers().unwrap();
     reader.register(FixtureParser).unwrap();
     assert!(matches!(
         reader.register(AliasParser(&["FIXTURE"])),
@@ -85,7 +85,7 @@ impl ConfigParser for AliasParser {
 
 #[tokio::test]
 async fn parser_declared_aliases_select_the_same_adapter() {
-    let mut reader = ConfigReader::new().with_builtin_parsers().unwrap();
+    let reader = ConfigReader::new().with_builtin_parsers().unwrap();
     reader.register(AliasParser(&["fixture", "custom", "CUSTOM"])).unwrap();
     for path in ["settings.fixture", "settings.CUSTOM"] {
         let settings: Settings = reader
@@ -98,7 +98,7 @@ async fn parser_declared_aliases_select_the_same_adapter() {
 
 #[tokio::test]
 async fn rejected_alias_registration_installs_no_partial_mapping() {
-    let mut reader = ConfigReader::new().with_builtin_parsers().unwrap();
+    let reader = ConfigReader::new().with_builtin_parsers().unwrap();
     reader.register(FixtureParser).unwrap();
     assert!(matches!(
         reader.register(AliasParser(&["custom", "FIXTURE"])),
@@ -150,7 +150,7 @@ async fn builtins_select_both_yaml_extensions_without_individual_registration()
 #[cfg(feature = "json")]
 #[test]
 fn enabled_builtin_parser_cannot_be_replaced_by_custom_registration() {
-    let mut reader = ConfigReader::new().with_builtin_parsers().unwrap();
+    let reader = ConfigReader::new().with_builtin_parsers().unwrap();
     assert!(matches!(
         reader.register(AliasParser(&["JSON"])),
         Err(Error::DuplicateParser(_))
@@ -171,7 +171,7 @@ async fn new_reader_remains_empty_even_when_format_features_are_enabled() {
 #[cfg(feature = "json")]
 #[test]
 fn adding_builtins_rejects_conflicting_custom_parser_mappings() {
-    let mut reader = ConfigReader::new();
+    let reader = ConfigReader::new();
     reader.register(AliasParser(&["json"])).unwrap();
     assert!(matches!(
         reader.with_builtin_parsers(),
@@ -327,7 +327,7 @@ async fn resolve_variables(
     text: &str,
     variables: &Variables,
 ) -> congif::Result<ConfigValue> {
-    let mut reader = ConfigReader::new().with_builtin_parsers().unwrap();
+    let reader = ConfigReader::new().with_builtin_parsers().unwrap();
     reader.register(SourceParser)?;
     reader
         .parse_with_variables(
