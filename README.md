@@ -259,6 +259,14 @@ the native watcher thread. Preparation alone never calls this handler.
 the handler and acknowledges it only on success. A failure keeps the candidate
 unapplied for retry. This is separate from a manual runtime reload request.
 
+For independently readable parts, also implement `PartialConfigObserver` and
+expose it through `as_partial_config_observer()`. Its `partial_sources(reader)`
+explicitly registers those paths; `read_partial_config(reader, changed_paths)`
+returns a complete candidate while retaining unchanged parts. The reader still
+validates and compares the whole candidate, then delivers it and the paths to
+`partial_config_changed`. Root/environment changes and explicit reload keep the
+full-document path. Ordinary observers need no changes.
+
 ### Dot-path access for hosted applications
 
 Rust integrations can expose configuration to PHP, Lua, JavaScript or other

@@ -48,6 +48,14 @@ pub trait Configurable: Send + Sync {
         None
     }
 
+    /// Opt in to independently watched partial sources. Ordinary owners keep
+    /// their existing full-document preparation and observation path.
+    fn as_partial_config_observer(
+        &self
+    ) -> Option<&dyn PartialConfigObserver<Config = Self::Config>> {
+        None
+    }
+
     /// Select a registered environment for configuration preparation.
     /// `None` uses the reader's application-owned binding, if any. This is not
     /// the environment supplied to a child process or hosted application.
@@ -113,6 +121,33 @@ pub trait ConfigObserver: Configurable {
     ) -> Result<()>;
 }
 
+/// Optional partial-source preparation and application, separate from reload.
+///
+/// Only these owners register partial sources. A root source, environment
+/// refresh or explicit reload still prepares the complete configuration.
+/// Partial reading must return a complete candidate retaining unchanged parts;
+/// validation and catalog publication precede the application hook. No source
+/// IO or parsing belongs in `partial_config_changed`.
+/// Changed paths retain their spelling from `partial_sources`; watcher path
+/// normalization is used only to match notifications to these declarations.
+#[async_trait]
+pub trait PartialConfigObserver: ConfigObserver {
+    fn partial_sources(
+        &self,
+        reader: &ConfigReader,
+    ) -> Result<Vec<std::path::PathBuf>>;
+    async fn read_partial_config(
+        &self,
+        reader: &ConfigReader,
+        sources: &[std::path::PathBuf],
+    ) -> Result<Self::Config>;
+    async fn partial_config_changed(
+        &self,
+        config: &Self::Config,
+        sources: &[std::path::PathBuf],
+    ) -> Result<()>;
+}
+
 /// The erased form of a [`Configurable`], implemented for every one of them.
 ///
 /// Runtimes hand configurable components to the reader through this trait —
@@ -128,6 +163,26 @@ pub trait ConfigRegistration: Any + Send + Sync {
         config: &(dyn Any + Send + Sync),
     ) -> Result<()>;
     fn observes_config(&self) -> bool;
+    fn partial_sources(
+        &self,
+        _reader: &ConfigReader,
+    ) -> Result<Option<Vec<std::path::PathBuf>>> {
+        Ok(None)
+    }
+    async fn prepare_partial_config(
+        &self,
+        reader: &ConfigReader,
+        _sources: &[std::path::PathBuf],
+    ) -> Result<Arc<dyn Any + Send + Sync>> {
+        self.prepare_config(reader).await
+    }
+    async fn partial_config_changed(
+        &self,
+        config: &(dyn Any + Send + Sync),
+        _sources: &[std::path::PathBuf],
+    ) -> Result<()> {
+        self.config_changed(config).await
+    }
     fn environment(&self) -> Option<&dotenw::EnvHandle>;
     async fn config_changed(
         &self,
@@ -166,6 +221,40 @@ impl<T: Configurable + 'static> ConfigRegistration for T {
     }
     fn observes_config(&self) -> bool {
         self.as_config_observer().is_some()
+            || self.as_partial_config_observer().is_some()
+    }
+    fn partial_sources(
+        &self,
+        reader: &ConfigReader,
+    ) -> Result<Option<Vec<std::path::PathBuf>>> {
+        self.as_partial_config_observer()
+            .map(|observer| observer.partial_sources(reader))
+            .transpose()
+    }
+    async fn prepare_partial_config(
+        &self,
+        reader: &ConfigReader,
+        sources: &[std::path::PathBuf],
+    ) -> Result<Arc<dyn Any + Send + Sync>> {
+        let Some(observer) = self.as_partial_config_observer() else {
+            return self.prepare_config(reader).await;
+        };
+        let config = observer.read_partial_config(reader, sources).await?;
+        self.validate_config(&config)?;
+        Ok(Arc::new(config))
+    }
+    async fn partial_config_changed(
+        &self,
+        config: &(dyn Any + Send + Sync),
+        sources: &[std::path::PathBuf],
+    ) -> Result<()> {
+        let Some(observer) = self.as_partial_config_observer() else {
+            return ConfigRegistration::config_changed(self, config).await;
+        };
+        let config = config.downcast_ref::<T::Config>().ok_or_else(|| {
+            crate::Error::MissingConfig(std::any::type_name::<T>())
+        })?;
+        observer.partial_config_changed(config, sources).await
     }
     fn environment(&self) -> Option<&dotenw::EnvHandle> {
         Configurable::environment(self)
@@ -174,11 +263,16 @@ impl<T: Configurable + 'static> ConfigRegistration for T {
         &self,
         config: &(dyn Any + Send + Sync),
     ) -> Result<()> {
-        let Some(observer) = self.as_config_observer() else { return Ok(()) };
         let config = config.downcast_ref::<T::Config>().ok_or_else(|| {
             crate::Error::MissingConfig(std::any::type_name::<T>())
         })?;
-        observer.config_changed(config).await
+        if let Some(observer) = self.as_config_observer() {
+            observer.config_changed(config).await
+        } else if let Some(observer) = self.as_partial_config_observer() {
+            observer.config_changed(config).await
+        } else {
+            Ok(())
+        }
     }
     fn exported_config(
         &self,

@@ -27,6 +27,7 @@ struct ConfigEntry {
     typed: Arc<dyn Any + Send + Sync>,
     exported: Option<Arc<(String, crate::ConfigValue)>>,
     applied: Option<Arc<dyn Any + Send + Sync>>,
+    partial: Option<Vec<PathBuf>>,
 }
 
 /// An exact prepared generation, pinned before applying runtime resources.
@@ -36,6 +37,7 @@ pub struct PreparedConfig {
     owner: TypeId,
     value: Arc<dyn Any + Send + Sync>,
     reader: Arc<()>,
+    partial: Option<Vec<PathBuf>>,
 }
 
 impl ConfigEntry {
@@ -156,6 +158,9 @@ impl ConfigReader {
     ) -> Result<Vec<PathBuf>> {
         let source = owner.source().path;
         let mut paths = self.includes_for(&source)?;
+        if let Some(partial) = owner.partial_sources(self)? {
+            paths.extend(partial);
+        }
         paths.push(source);
         if let Some(environment) = owner
             .environment()
@@ -330,6 +335,9 @@ impl ConfigReader {
                 let source = owner.source().path;
                 let mut config_sources = vec![source.clone()];
                 config_sources.extend(self.includes_for(&source)?);
+                if let Some(partial) = owner.partial_sources(&reader)? {
+                    config_sources.extend(partial);
+                }
                 let mut config_changed = false;
                 for source in config_sources {
                     let parent = source
@@ -373,11 +381,44 @@ impl ConfigReader {
                     continue;
                 }
             }
-            pending.push(*owner);
+            let mut partial = None;
+            if let EnvironmentRefresh::Files(paths) = &refresh_environment
+                && let Some(previous) = candidate.get(&id)
+                && !(previous.needs_application(*owner)
+                    && previous.partial.is_none())
+                && !reader.environment_for(id)?.is_some_and(|environment| {
+                    changed_environments.contains(&environment.id())
+                })
+                && let Some(sources) = owner.partial_sources(&reader)?
+            {
+                let root = normalized_source(&owner.source().path).await?;
+                if !paths.contains(&root) {
+                    let mut selected = Vec::new();
+                    for source in sources {
+                        let watched = normalized_source(&source).await?;
+                        if paths.contains(&watched) {
+                            // Match watcher identity, but deliver the owner's
+                            // registered path: prepared parts may be keyed by
+                            // that same relative source path.
+                            selected.push(source);
+                        }
+                    }
+                    selected.sort();
+                    selected.dedup();
+                    if !selected.is_empty() {
+                        partial = Some(selected);
+                    }
+                }
+            }
+            pending.push((*owner, partial));
         }
-        // Pin every declared source before deserializing any component.
+        // Pin full-document roots before deserializing those components.
+        // Opt-in partial owners read only their selected source parts.
         // Each component still owns its schema and domain validation.
-        for owner in &pending {
+        for (owner, partial) in &pending {
+            if partial.is_some() {
+                continue;
+            }
             let file = owner.source();
             let parser = reader.format_parser(&file.format, &file.path)?;
             // An absent file is the owner's to answer for in `prepare`.
@@ -408,9 +449,14 @@ impl ConfigReader {
                 )
                 .await?;
         }
-        for owner in pending {
+        for (owner, mut partial) in pending {
             let id = owner.type_id();
-            let prepared = owner.prepare_config(&reader).await?;
+            let prepared = match &partial {
+                Some(paths) => {
+                    owner.prepare_partial_config(&reader, paths).await?
+                }
+                None => owner.prepare_config(&reader).await?,
+            };
             if candidate.get(&id).is_some_and(|previous| {
                 owner.same_config(previous.typed.as_ref(), prepared.as_ref())
             }) {
@@ -437,6 +483,15 @@ impl ConfigReader {
             }
             let applied =
                 candidate.get(&id).and_then(|entry| entry.applied.clone());
+            if let Some(paths) = &mut partial
+                && let Some(previous) = candidate.get(&id)
+                && previous.needs_application(owner)
+                && let Some(earlier) = &previous.partial
+            {
+                paths.extend(earlier.iter().cloned());
+                paths.sort();
+                paths.dedup();
+            }
             let requires_application = applied.as_ref().is_none_or(|applied| {
                 !owner.same_config(applied.as_ref(), prepared.as_ref())
             });
@@ -446,6 +501,7 @@ impl ConfigReader {
                     typed: prepared,
                     exported: exported.map(Arc::new),
                     applied,
+                    partial,
                 },
             );
             updated = true;
@@ -478,6 +534,7 @@ impl ConfigReader {
             owner: id,
             value: entry.typed.clone(),
             reader: self.identity.clone(),
+            partial: entry.partial.clone(),
         })
     }
 
@@ -494,7 +551,14 @@ impl ConfigReader {
         let prepared = self.prepared_config(owner).ok_or_else(|| {
             Error::msg("configuration owner has not been prepared")
         })?;
-        owner.config_changed(prepared.value.as_ref()).await?;
+        match &prepared.partial {
+            Some(paths) => {
+                owner
+                    .partial_config_changed(prepared.value.as_ref(), paths)
+                    .await?
+            }
+            None => owner.config_changed(prepared.value.as_ref()).await?,
+        }
         self.confirm_applied(prepared).await
     }
 
@@ -1153,4 +1217,22 @@ impl ConfigReader {
         }
         Ok(value)
     }
+}
+
+/// Normalize a watched file without requiring the file itself to exist.
+async fn normalized_source(path: &Path) -> Result<PathBuf> {
+    if path.is_absolute() {
+        return Ok(path.to_owned());
+    }
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let parent = tokio::fs::canonicalize(parent)
+        .await
+        .map_err(|source| Error::Read { path: parent.to_owned(), source })?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| Error::msg("configuration source has no filename"))?;
+    Ok(parent.join(name))
 }

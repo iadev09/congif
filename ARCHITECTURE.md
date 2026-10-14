@@ -132,6 +132,25 @@ acknowledges application only after the observer succeeds. This callback is not
 executed by parsing, validation or the native notification thread. Manual reload
 remains a separate lifecycle operation.
 
+`PartialConfigObserver` is a separate opt-in extension of `ConfigObserver`.
+Only owners exposing it through `as_partial_config_observer` register partial
+sources with `partial_sources(&ConfigReader)`. On a partial-file notification,
+the reader passes the changed registered paths to `read_partial_config`, not
+to the ordinary full-document reader. The owner retains unchanged prepared
+parts and returns a complete candidate for the existing validation/equality
+pipeline. Congif owns no domain-specific merge or per-file cache.
+Changed paths retain the spelling registered by the owner. The reader normalizes
+them only for matching absolute watcher notifications, not for looking up the
+owner's prepared source parts. Relative declarations therefore remain relative
+when delivered to the partial reader and application hook.
+
+After preparation, `partial_config_changed` receives the exact candidate and
+its changed paths; this hook does not parse or reopen sources. A failed apply
+remains pending, including its partial paths, so a subsequent candidate cannot
+lose earlier unapplied changes. Root changes, effective environment changes,
+startup and explicit reload use full preparation and the normal application
+hook. Owners without this capability retain their existing API and behavior.
+
 ## Optional native watching
 
 ### Program environments
@@ -185,6 +204,8 @@ not opened merely to discover dependencies, so dependencies declared inside
 them are the responsibility of their own parser/loader.
 
 `sources_for` combines this list with source and environment dependencies.
+Opt-in partial owners may add recursively discovered dependencies through
+`partial_sources`; registration itself opens no included documents.
 Include notifications participate in the same source-invalidation check as the
 root document. `ConfigWatcher::update_owner_paths` replaces dependency routing
 without adding another callback or watcher. Continuo refreshes routing after
