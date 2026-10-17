@@ -1,6 +1,6 @@
 [package]
 name = "congif"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
 rust-version = "1.88"
 authors = ["iadev09 <iadev09@claviron.org>"]
@@ -8,7 +8,6 @@ description = "Typed configuration reading, validated preparation and atomic sna
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/iadev09/congif"
 documentation = "https://docs.rs/congif"
-readme = "README.md"
 keywords = ["configuration", "serde", "snapshot", "reload", "watch"]
 categories = ["config", "asynchronous"]
 exclude = ["/Cargo.lock", "/rustfmt.toml", "/.idea/**", "/ARCHITECTURE.md", "/*.local.md"]
@@ -27,7 +26,7 @@ xml = ["dep:roxmltree"]
 watch = ["dep:notify"]
 
 [dependencies]
-dotenw = { path = "../dotenw" }
+dotenw = "0.0.1"
 serde = { version = "1", features = ["derive", "rc"] }
 serde-value = "0.7"
 arc-swap = "1"

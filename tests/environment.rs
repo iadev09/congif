@@ -179,10 +179,10 @@ async fn shared_environment_prepares_owners_without_reloading_unchanged_configs(
     reader.configure_registered(&first).await.unwrap();
     reader.configure_registered(&second).await.unwrap();
     let previous = reader.snapshot::<Owner<1>>().unwrap();
-    assert_eq!(
-        reader.sources_for(&first).unwrap(),
-        vec![fixture("settings.json"), std::fs::canonicalize(&path).unwrap()]
-    );
+    let mut expected_sources =
+        vec![fixture("settings.json"), std::fs::canonicalize(&path).unwrap()];
+    expected_sources.sort();
+    assert_eq!(reader.sources_for(&first).unwrap(), expected_sources);
     std::fs::copy(fixture("unused.env"), &path).unwrap();
     assert!(reader.prepare_changed_owners(&owners).await.unwrap().is_empty());
     assert!(Arc::ptr_eq(&previous, &reader.snapshot::<Owner<1>>().unwrap()));

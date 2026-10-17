@@ -19,7 +19,7 @@ across many services. There is no required framework or service registry;
 
 ~~~toml
 [dependencies]
-congif = { version = "0.1", features = ["json"] }
+congif = { version = "0.0.1", features = ["json"] }
 serde = { version = "1", features = ["derive"] }
 ~~~
 
